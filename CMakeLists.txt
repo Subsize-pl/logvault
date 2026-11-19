@@ -17,3 +17,4 @@ function(lv_enable_warnings target)
 endfunction()
 
 add_subdirectory(src/core)
+add_subdirectory(src/gui)
