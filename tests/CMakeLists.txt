@@ -4,6 +4,8 @@ qt_add_executable(lv_tests
     main.cpp
     tst_environment.cpp
     tst_environment.h
+    tst_fileimporter.cpp
+    tst_fileimporter.h
     tst_intake.cpp
     tst_intake.h
     tst_lineparser.cpp

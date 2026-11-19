@@ -368,10 +368,13 @@ $w.WriteLine('{"level":"error","service":"test","msg":"Hello from PowerShell"}')
 
 - Files are chosen in a `QFileDialog` (several allowed) or dropped onto the window. The source for each file is the
   file name without extension; a small dialog before the import lets the user change it or pick an existing source.
-- Reading line by line (`QFile` + `readLine`); a UTF-8 BOM at the start is skipped.
-- A line starting with a space or a tab is appended to the previous record (this joins stack traces).
+- Reading in blocks (`QFile::read`) split into lines by `LineSplitter`, with the same rules as TCP (line breaks,
+  blank lines, the 64 KB limit); a UTF-8 BOM at the start is skipped, a UTF-16 file is rejected with a clear message.
+- A line starting with a space or a tab is appended to the previous record (this joins stack traces); a joined record
+  is limited to 64 KB like a line and flagged `_truncated` beyond that.
 - Writing in transactions of 1,000 records. Progress (percent of bytes) is signaled at most 10 times per second.
 - Cancel sets a flag; already committed transactions stay in the database, and the summary says so.
+- A file that cannot be opened or read stops the import with an error; the lines read before it are still written.
 - Summary: "Added N records, M lines not parsed, took T" (unparsed lines are still stored, see §5.4).
 
 ### 5.4. Line parsing (`LineParser`)

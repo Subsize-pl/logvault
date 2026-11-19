@@ -1,4 +1,5 @@
 #include "tst_environment.h"
+#include "tst_fileimporter.h"
 #include "tst_intake.h"
 #include "tst_lineparser.h"
 #include "tst_linesplitter.h"
@@ -33,5 +34,6 @@ int main(int argc, char* argv[]) {
     failed += runTests<TestLineParser>(argc, argv);
     failed += runTests<TestLineSplitter>(argc, argv);
     failed += runTests<TestIntake>(argc, argv);
+    failed += runTests<TestFileImporter>(argc, argv);
     return failed == 0 ? 0 : 1;
 }
