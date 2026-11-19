@@ -1,0 +1,19 @@
+# Build output
+build/
+cmake-build-*/
+
+# IDE
+.idea/
+.vs/
+.vscode/
+
+# Local Claude Code settings
+.claude/settings.local.json
+
+# Databases created while running or testing
+*.lvdb
+*.lvdb-wal
+*.lvdb-shm
+
+# Python
+__pycache__/
