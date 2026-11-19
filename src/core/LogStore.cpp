@@ -5,11 +5,67 @@
 #include <QDateTime>
 #include <QSqlError>
 
+#include <algorithm>
+
 namespace {
 
 // Qt binds a null QString as SQL NULL, which the NOT NULL text columns reject; an empty text is valid input.
 QVariant nonNullText(const QString& text) {
     return text.isNull() ? QVariant(QStringLiteral("")) : QVariant(text);
+}
+
+// "WHERE <condition>" for queries over "records r", or nothing when every record matches.
+QString whereClause(const SqlFragment& condition) {
+    return condition.sql.isEmpty() ? QString() : QStringLiteral("WHERE ") + condition.sql;
+}
+
+// Reads the columns r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw of the current row.
+Record readRecord(const QSqlQuery& query) {
+    Record record;
+    record.id = query.value(0).toLongLong();
+    record.ts = query.value(1).toLongLong();
+    record.level = levelFromValue(query.value(2).toInt());
+    record.source = query.value(3).toString();
+    record.message = query.value(4).toString();
+    record.fields = query.value(5).toString();
+    record.raw = query.value(6).toString();
+    return record;
+}
+
+// Both conditions; either may be empty.
+SqlFragment bothOf(const SqlFragment& first, const SqlFragment& second) {
+    if (first.sql.isEmpty() || second.sql.isEmpty()) {
+        return first.sql.isEmpty() ? second : first;
+    }
+    return {first.sql + QStringLiteral(" AND ") + second.sql, first.values + second.values};
+}
+
+// The statistics query of DESIGN.md section 6.3 for a level, source or message mode. Each returns the
+// columns id, value, count, largest groups first; ties are ordered by value so the order is stable.
+SqlFragment statisticsQuery(const SqlFragment& condition, StatsMode mode) {
+    const QString where = whereClause(condition);
+    switch (mode) {
+    case StatsMode::Level:
+        return {QStringLiteral("SELECT r.level, NULL, count(*) FROM records r %1 "
+                               "GROUP BY r.level ORDER BY 3 DESC, 1")
+                    .arg(where),
+                condition.values};
+    case StatsMode::Source:
+        return {QStringLiteral(
+                    "SELECT s.id, s.name, count(*) FROM records r JOIN sources s ON s.id = r.source_id "
+                    "%1 GROUP BY s.id ORDER BY 3 DESC, 2")
+                    .arg(where),
+                condition.values};
+    case StatsMode::Message:
+        return {QStringLiteral("SELECT 0, r.msg_key, count(*) FROM records r %1 "
+                               "GROUP BY r.msg_key ORDER BY 3 DESC, 2 LIMIT ?")
+                    .arg(where),
+                condition.values + QVariantList{LogStore::kStatsRowLimit}};
+    case StatsMode::None:
+    case StatsMode::Field:
+        break;
+    }
+    return {};
 }
 
 } // namespace
@@ -89,42 +145,47 @@ std::optional<qint64> LogStore::deleteRecordsOlderThan(qint64 ts, qint64 sourceI
 }
 
 std::optional<qint64> LogStore::recordCount() {
-    QSqlQuery query(m_db);
-    query.setForwardOnly(true);
-    if (!execute(query, QStringLiteral("SELECT count(*) FROM records"))) {
+    const std::optional<QVariant> count = selectValue(QStringLiteral("SELECT count(*) FROM records"));
+    if (!count) {
         failWith(tr("Cannot count records"));
         return std::nullopt;
     }
-    if (!query.next()) {
-        setError(query);
-        failWith(tr("Cannot count records"));
-        return std::nullopt;
-    }
-    return query.value(0).toLongLong();
+    return count->toLongLong();
 }
 
-std::optional<QVector<Record>> LogStore::latestRecords(int limit) {
+bool LogStore::beginRead() {
+    // A deferred transaction takes no lock; the first query fixes the state that all of them see.
+    QSqlQuery query(m_db);
+    if (execute(query, QStringLiteral("BEGIN"))) {
+        return true;
+    }
+    return failWith(tr("Cannot start reading"));
+}
+
+void LogStore::endRead() {
+    QSqlQuery query(m_db);
+    // Nothing was written, so a failure loses no data; it would mean a query is still active.
+    if (!query.exec(QStringLiteral("COMMIT"))) {
+        qWarning("LogStore: ending a read transaction failed: %s", qPrintable(query.lastError().text()));
+        rollback();
+    }
+}
+
+std::optional<QVector<Record>> LogStore::findRecords(const SqlFragment& condition, int limit) {
     QSqlQuery query(m_db);
     query.setForwardOnly(true);
     const QString sql = QStringLiteral("SELECT r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw "
-                                       "FROM records r JOIN sources s ON s.id = r.source_id "
-                                       "ORDER BY r.ts DESC, r.id DESC LIMIT ?");
+                                       "FROM records r JOIN sources s ON s.id = r.source_id %1 "
+                                       "ORDER BY r.ts DESC, r.id DESC LIMIT ?")
+                            .arg(whereClause(condition));
     // A negative LIMIT means "no limit" in SQLite.
-    if (!execute(query, sql, {qMax(0, limit)})) {
+    if (!execute(query, sql, condition.values + QVariantList{qMax(0, limit)})) {
         failWith(tr("Cannot read records"));
         return std::nullopt;
     }
     QVector<Record> result;
     while (query.next()) {
-        Record record;
-        record.id = query.value(0).toLongLong();
-        record.ts = query.value(1).toLongLong();
-        record.level = levelFromValue(query.value(2).toInt());
-        record.source = query.value(3).toString();
-        record.message = query.value(4).toString();
-        record.fields = query.value(5).toString();
-        record.raw = query.value(6).toString();
-        result.append(record);
+        result.append(readRecord(query));
     }
     if (query.lastError().isValid()) {
         setError(query);
@@ -132,6 +193,141 @@ std::optional<QVector<Record>> LogStore::latestRecords(int limit) {
         return std::nullopt;
     }
     return result;
+}
+
+std::optional<MatchSpan> LogStore::matchSpan(const SqlFragment& condition) {
+    // Separate min() and max() queries: SQLite answers each by walking the time index from one end and
+    // stopping at the first match, so the two walks never overlap. count() would read every match.
+    const QString where = whereClause(condition);
+    const std::optional<QVariant> first =
+        selectValue(QStringLiteral("SELECT min(r.ts) FROM records r %1").arg(where), condition.values);
+    if (!first) {
+        failWith(tr("Cannot search records"));
+        return std::nullopt;
+    }
+    MatchSpan span;
+    if (first->isNull()) {
+        return span;
+    }
+    const std::optional<QVariant> last =
+        selectValue(QStringLiteral("SELECT max(r.ts) FROM records r %1").arg(where), condition.values);
+    if (!last) {
+        failWith(tr("Cannot search records"));
+        return std::nullopt;
+    }
+    span.found = true;
+    span.firstTs = first->toLongLong();
+    span.lastTs = last->toLongLong();
+    return span;
+}
+
+std::optional<Histogram> LogStore::histogram(const SqlFragment& condition, qint64 first, qint64 last) {
+    Histogram histogram = Histogram::forRange(first, last);
+    QSqlQuery query(m_db);
+    query.setForwardOnly(true);
+    const QString sql =
+        QStringLiteral("SELECT (r.ts - ?) / ?, r.level, count(*) FROM records r %1 GROUP BY 1, 2")
+            .arg(whereClause(condition));
+    if (!execute(query, sql, QVariantList{histogram.start, histogram.step} + condition.values)) {
+        failWith(tr("Cannot build the histogram"));
+        return std::nullopt;
+    }
+    while (query.next()) {
+        const qint64 bar = query.value(0).toLongLong();
+        const Level level = levelFromValue(query.value(1).toInt());
+        if (bar >= 0 && bar < histogram.bars.size()) {
+            histogram.bars[bar][static_cast<int>(level)] += query.value(2).toLongLong();
+        }
+    }
+    if (query.lastError().isValid()) {
+        setError(query);
+        failWith(tr("Cannot build the histogram"));
+        return std::nullopt;
+    }
+    return histogram;
+}
+
+std::optional<QVector<StatsRow>> LogStore::statistics(const SqlFragment& condition, StatsMode mode) {
+    if (mode != StatsMode::Level && mode != StatsMode::Source && mode != StatsMode::Message) {
+        return QVector<StatsRow>();
+    }
+    QSqlQuery query(m_db);
+    query.setForwardOnly(true);
+    const SqlFragment select = statisticsQuery(condition, mode);
+    if (!execute(query, select.sql, select.values)) {
+        failWith(tr("Cannot compute statistics"));
+        return std::nullopt;
+    }
+    QVector<StatsRow> rows;
+    while (query.next()) {
+        StatsRow row;
+        row.id = query.value(0).toLongLong();
+        row.count = query.value(2).toLongLong();
+        row.value = mode == StatsMode::Level ? levelName(levelFromValue(static_cast<int>(row.id)))
+                                             : query.value(1).toString();
+        rows.append(row);
+    }
+    if (query.lastError().isValid()) {
+        setError(query);
+        failWith(tr("Cannot compute statistics"));
+        return std::nullopt;
+    }
+    return rows;
+}
+
+std::optional<QVector<StatsRow>> LogStore::fieldStatistics(const SqlFragment& condition, const QString& field,
+                                                           qint64 matchCount) {
+    if (!SearchQuery::isValidFieldName(field)) {
+        m_errorString = tr("\"%1\" is not a valid field name").arg(field);
+        failWith(tr("Cannot compute statistics"));
+        return std::nullopt;
+    }
+    // Only records that mention the field are grouped: sorting every match just to count the ones without
+    // the field would take most of the time. The window sum counts the records with the field in all
+    // groups, not only in the first kStatsRowLimit.
+    const SqlFragment value = SearchQuery::fieldValue(field);
+    const SqlFragment where = bothOf(condition, SearchQuery::fieldMention(field));
+    const QString sql =
+        QStringLiteral("SELECT %1 AS field_value, count(*), sum(count(*)) OVER () FROM records r WHERE %2 "
+                       "GROUP BY 1 HAVING field_value IS NOT NULL ORDER BY 2 DESC, 1 LIMIT ?")
+            .arg(value.sql, where.sql);
+    QSqlQuery query(m_db);
+    query.setForwardOnly(true);
+    if (!execute(query, sql, value.values + where.values + QVariantList{kStatsRowLimit})) {
+        failWith(tr("Cannot compute statistics"));
+        return std::nullopt;
+    }
+    QVector<StatsRow> rows;
+    qint64 withField = 0;
+    while (query.next()) {
+        StatsRow row;
+        row.value = query.value(0).toString();
+        row.count = query.value(1).toLongLong();
+        rows.append(row);
+        withField = query.value(2).toLongLong();
+    }
+    if (query.lastError().isValid()) {
+        setError(query);
+        failWith(tr("Cannot compute statistics"));
+        return std::nullopt;
+    }
+    // The matches without the field (or with null in it) form one group, placed by its size; it goes before
+    // groups of the same size, where SQL puts NULL.
+    const qint64 withoutField = matchCount - withField;
+    if (withoutField > 0) {
+        StatsRow row;
+        row.value = tr("(no field)");
+        row.count = withoutField;
+        row.noField = true;
+        const auto position = std::find_if(rows.begin(), rows.end(), [withoutField](const StatsRow& other) {
+            return other.count <= withoutField;
+        });
+        rows.insert(position, row);
+        if (rows.size() > kStatsRowLimit) {
+            rows.removeLast();
+        }
+    }
+    return rows;
 }
 
 QString LogStore::errorString() const { return m_errorString; }
@@ -321,6 +517,19 @@ bool LogStore::execute(QSqlQuery& query, const QString& sql, const QVariantList&
         return setError(query);
     }
     return true;
+}
+
+std::optional<QVariant> LogStore::selectValue(const QString& sql, const QVariantList& values) {
+    QSqlQuery query(m_db);
+    query.setForwardOnly(true);
+    if (!execute(query, sql, values)) {
+        return std::nullopt;
+    }
+    if (!query.next()) {
+        setError(query);
+        return std::nullopt;
+    }
+    return query.value(0);
 }
 
 bool LogStore::setError(const QSqlQuery& query) {

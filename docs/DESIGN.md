@@ -497,27 +497,37 @@ Any input is valid: there are no syntax errors; a part that cannot be interprete
 ### 6.3. Database queries (`LogStore`)
 
 ```sql
--- records (newest first)
-SELECT r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw
-FROM records r JOIN sources s ON s.id = r.source_id
-WHERE <F> ORDER BY r.ts DESC, r.id DESC LIMIT :maxRows;
+-- 1. the oldest and the newest match: SQLite walks the time index from one end and stops at the first match
+SELECT min(r.ts) FROM records r WHERE <F>;
+SELECT max(r.ts) FROM records r WHERE <F>;
 
--- total matches and their time span (for "All time" — to pick the histogram step)
-SELECT count(*), min(r.ts), max(r.ts) FROM records r WHERE <F>;
-
--- histogram
-SELECT (r.ts - :from) / :step AS bucket, r.level, count(*)
+-- 2. histogram over the period, or up to the oldest / newest match where it is unbounded ("All time");
+--    every match is in exactly one bar, so the bars also give the total
+SELECT (r.ts - :start) / :step AS bucket, r.level, count(*)
 FROM records r WHERE <F> GROUP BY bucket, r.level;
 
--- statistics: by level / source / similar messages / field
-SELECT r.level, count(*)   FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC;
-SELECT s.name,  count(*)   FROM records r JOIN sources s ON s.id = r.source_id WHERE <F> GROUP BY 1 ORDER BY 2 DESC;
-SELECT r.msg_key, count(*) FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC LIMIT 100;
-SELECT CAST(json_extract(r.fields, :path) AS TEXT), count(*)
-                           FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC LIMIT 100;   -- NULL = "(no field)"
+-- 3. records (newest first), searched only between the oldest and the newest match
+SELECT r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw
+FROM records r JOIN sources s ON s.id = r.source_id
+WHERE <F> AND r.ts >= :oldest AND r.ts < :newest + 1 ORDER BY r.ts DESC, r.id DESC LIMIT :maxRows;
+
+-- 4. statistics: by level / source / similar messages / field; largest groups first, ties by value
+SELECT r.level, count(*)   FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC, 1;
+SELECT s.name,  count(*)   FROM records r JOIN sources s ON s.id = r.source_id WHERE <F> GROUP BY s.id ORDER BY 2 DESC, 1;
+SELECT r.msg_key, count(*) FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 100;
+SELECT <value>, count(*), sum(count(*)) OVER () FROM records r WHERE <F> AND instr(r.fields, :quotedName) > 0
+GROUP BY 1 HAVING <value> IS NOT NULL ORDER BY 2 DESC, 1 LIMIT 100;   -- "(no field)" = total - the window sum
 ```
 
-`<F>` is the condition built from the UI filters and the search line (§6.2).
+`<F>` is the condition built from the UI filters and the search line (§6.2), `<value>` the field value of §6.2. All
+queries of one search run in one read transaction (`LogStore::beginRead()`), so they describe the same records while
+intake keeps writing.
+
+Why this shape: on 1,000,000 records one pass over the table takes about 0.3 s, and parsing the JSON of every record
+about as much again. A `count(*)` would be such a pass on its own, while `min()` and `max()` usually stop after a few
+records. The rows query stops at the oldest match instead of walking the whole time index when there are fewer matches
+than `maxRows`. Field statistics group only the records that mention the field and count "(no field)" by subtraction,
+so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4).
 
 ### 6.4. Histogram
 
@@ -532,9 +542,11 @@ SELECT CAST(json_extract(r.fields, :path) AS TEXT), count(*)
 ### 6.5. Statistics
 
 - The Statistics tab: "Group by: level / source / similar messages / field…".
-- Table: value, count, share (percent of matches). Levels and sources are shown by name, not by number.
-- Double-click: level → keep only that level; source → select that source; field → add `field:value` to the search line;
-  similar message → add the longest `#`-free part of the pattern, in quotes, to the search line.
+- Table: value, count, share (percent of matches). Levels and sources are shown by name, not by number
+  (`StatsRow::id` carries the level value or the source id).
+- Double-click: level → keep only that level; source → select that source; field → add `field:value` to the search line
+  (`-field:*` for the "(no field)" row); similar message → add the longest `#`-free part of the pattern, in quotes, to
+  the search line.
 
 ### 6.6. Live mode
 

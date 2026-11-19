@@ -1,12 +1,14 @@
 #pragma once
 
 #include "Record.h"
+#include "SearchQuery.h"
 
 #include <QCoreApplication>
 #include <QHash>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QString>
+#include <QVariant>
 #include <QVariantList>
 #include <QVector>
 
@@ -22,8 +24,15 @@ struct SourceInfo {
     qint64 recordCount = 0;
 };
 
-/// The only place with SQL: writes records, manages sources and deletes old data on one Database connection.
-/// Use it only in the thread that opened the database, and destroy it before that Database.
+/// Where in time the records that match a condition are.
+struct MatchSpan {
+    bool found = false; // false when nothing matches
+    qint64 firstTs = 0; // ms UTC of the oldest match
+    qint64 lastTs = 0;  // ms UTC of the newest match
+};
+
+/// The only place with SQL: writes, searches and deletes records and manages sources on one Database
+/// connection. Use it only in the thread that opened the database, and destroy it before that Database.
 /// Methods report failure through their return value and errorString().
 class LogStore {
     Q_DECLARE_TR_FUNCTIONS(LogStore)
@@ -31,6 +40,8 @@ class LogStore {
 public:
     /// Records deleted per transaction, so other connections never wait long for the write lock.
     static constexpr int kDeleteChunkSize = 10'000;
+    /// Statistics rows at most when grouping by message or by field.
+    static constexpr int kStatsRowLimit = 100;
 
     /// The database must be open.
     explicit LogStore(Database& database);
@@ -61,8 +72,33 @@ public:
 
     std::optional<qint64> recordCount();
 
-    /// The newest records (by time, then by insertion order), at most limit of them.
-    std::optional<QVector<Record>> latestRecords(int limit);
+    /// Starts a read transaction: the queries until endRead() see one state of the database, even while
+    /// other connections write.
+    bool beginRead();
+    void endRead();
+
+    /// The records matching a condition built by SearchQuery, newest first (by time, then by insertion
+    /// order), at most limit of them.
+    std::optional<QVector<Record>> findRecords(const SqlFragment& condition, int limit);
+
+    /// The times of the oldest and the newest match. Cheap unless matches are rare: each end is found by
+    /// walking the time index from that side up to the first match.
+    std::optional<MatchSpan> matchSpan(const SqlFragment& condition);
+
+    /// Counts the matches per level in the bars of Histogram::forRange(first, last). first must not be later
+    /// than the oldest match; matches after the last bar are not counted.
+    std::optional<Histogram> histogram(const SqlFragment& condition, qint64 first, qint64 last);
+
+    /// Groups the matches by level, source or message pattern (msg_key), largest groups first; at most
+    /// kStatsRowLimit rows by message. Other modes give no rows (for fields, see fieldStatistics()).
+    std::optional<QVector<StatsRow>> statistics(const SqlFragment& condition, StatsMode mode);
+
+    /// Groups the matches by the value of a field, largest groups first, at most kStatsRowLimit rows; the
+    /// matches without the field make one "(no field)" row. matchCount is the number of matches (the
+    /// histogram total): only records that mention the field are grouped, and the rest are counted by
+    /// subtraction. The name must be valid (SearchQuery::isValidFieldName()).
+    std::optional<QVector<StatsRow>> fieldStatistics(const SqlFragment& condition, const QString& field,
+                                                     qint64 matchCount);
 
     QString errorString() const;
 
@@ -78,6 +114,7 @@ private:
     bool commit();
     void rollback();
     bool execute(QSqlQuery& query, const QString& sql, const QVariantList& values = {});
+    std::optional<QVariant> selectValue(const QString& sql, const QVariantList& values = {});
     bool setError(const QSqlQuery& query);
     bool failWith(const QString& action);
 
