@@ -1,7 +1,10 @@
 qt_add_executable(lv_tests
+    ConnectionGuard.h
     main.cpp
     tst_environment.cpp
     tst_environment.h
+    tst_storage.cpp
+    tst_storage.h
 )
 
 target_link_libraries(lv_tests PRIVATE lv_core Qt6::Test)

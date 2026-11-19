@@ -1,6 +1,12 @@
 qt_add_library(lv_core STATIC
     AppInfo.cpp
     AppInfo.h
+    Database.cpp
+    Database.h
+    LogStore.cpp
+    LogStore.h
+    Record.cpp
+    Record.h
 )
 
 target_include_directories(lv_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
