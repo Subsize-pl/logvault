@@ -5,6 +5,8 @@ qt_add_library(lv_core STATIC
     Database.h
     LineParser.cpp
     LineParser.h
+    LineSplitter.cpp
+    LineSplitter.h
     LogStore.cpp
     LogStore.h
     Record.cpp

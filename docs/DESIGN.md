@@ -193,7 +193,8 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 |---|---|---|
 | `Record`, `Level` | core | A log record and the level scale (§4.1). |
 | `TimeParser` | core | Parses a timestamp from text or a number (§5.4). |
-| `LineParser` | core | Line → `Record`: JSON or plain text, fields, `msg_key`. Stateless. |
+| `LineParser` | core | Line → `Record`: JSON or plain text, fields. Stateless (`LogStore` computes `msg_key`). |
+| `LineSplitter` | core | Splits a byte stream into lines: line breaks, blank lines, the 64 KB limit. Shared by `TcpServer` and `FileImporter`. |
 | `Database` | core | Opens a connection in the current thread, applies SQLite settings, creates the schema. |
 | `LogStore` | core | All SQL: batch insert, sources, search, histogram, statistics, deletion. The only place with SQL. |
 | `SearchQuery` | core | Filters + search line → `WHERE` clause and bound values (§6). |
@@ -338,7 +339,7 @@ PRAGMA busy_timeout = 5000;     -- wait up to 5 s if another writer holds the lo
 - A client connects to `127.0.0.1:5170` (the port is configurable) and sends UTF-8 lines, each ending with `\n`;
   a `\r` before it is dropped. One line = one record. The server sends nothing back.
 - A line is a JSON object or plain text (§5.4).
-- Lines longer than 64 KB are truncated (the record gets the field `_truncated: true`).
+- Lines longer than 64 KB are truncated (the record gets the field `_truncated: true`). Blank lines are skipped.
 - A connection may stay open for a long time (a logger keeps it open) or be opened for each batch of lines.
 - Address: "this computer only" (`127.0.0.1`, default) or "whole network" (`0.0.0.0`, needs a firewall permission).
 
@@ -527,7 +528,7 @@ logvault/
 ├── CMakePresets.json
 ├── src/
 │   ├── core/       Record, TimeParser, LineParser, Database, LogStore, SearchQuery, SearchService,
-│   │               Ingestor, TcpServer, FileImporter, Exporter
+│   │               LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
 │                   HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView, SettingsDialog,
 │                   Theme, resources.qrc (application icon)
@@ -546,7 +547,7 @@ logvault/
 | Data and parsing | `Record`, `TimeParser`, `LineParser` | 450 |
 | Database | `Database`, `LogStore` | 570 |
 | Search | `SearchQuery`, `SearchService` | 360 |
-| Intake, import, export | `Ingestor`, `TcpServer`, `FileImporter`, `Exporter` | 680 |
+| Intake, import, export | `LineSplitter`, `Ingestor`, `TcpServer`, `FileImporter`, `Exporter` | 680 |
 | Main window | `main.cpp`, `MainWindow` | 600 |
 | Panels | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `RecordDetailsPanel`, `StatsView` | 910 |
 | Table and histogram | `RecordTableModel`, `HistogramWidget` | 410 |
