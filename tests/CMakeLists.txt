@@ -15,6 +15,8 @@ qt_add_executable(lv_tests
     tst_linesplitter.h
     tst_pythonclient.cpp
     tst_pythonclient.h
+    tst_searchquery.cpp
+    tst_searchquery.h
     tst_storage.cpp
     tst_storage.h
     tst_timeparser.cpp

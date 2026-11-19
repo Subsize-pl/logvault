@@ -421,13 +421,25 @@ $w.WriteLine('{"level":"error","service":"test","msg":"Hello from PowerShell"}')
 enum class StatsMode { None, Level, Source, Message, Field };
 
 struct SearchRequest {
-    QList<Level>  levels;            // enabled levels
+    QList<Level>  levels = { all seven };  // enabled levels; empty = nothing matches
     QList<qint64> sourceIds;         // empty = all sources
-    qint64  from = 0, to = 0;        // ms UTC; 0 = unbounded
+    qint64  from = 0, to = 0;        // ms UTC, from inclusive, to exclusive; 0 = unbounded
     QString text;                    // search line (§6.2)
     int     maxRows = 10000;
     StatsMode statsMode = StatsMode::None;   // statistics are computed only while the Statistics tab is open
     QString   statsField;                    // for StatsMode::Field
+};
+
+struct Histogram {                   // §6.4
+    qint64 start = 0, step = 0;      // ms UTC; bar i covers [start + i*step, start + (i+1)*step)
+    QVector<std::array<qint64, 7>> bars;   // per bar, the count of each level (index = Level value)
+};
+
+struct StatsRow {                    // §6.5
+    QString value;                   // level name, source name, message pattern, field value or "(no field)"
+    qint64  count = 0;
+    qint64  id = 0;                  // level value or source id, for the double-click
+    bool    noField = false;         // field mode: the group of records without the field
 };
 
 struct SearchResult {
@@ -441,6 +453,8 @@ struct SearchResult {
 };
 ```
 
+`SearchQuery::build(request)` turns the filters and the search line into a condition over `records r` with its bound
+values (`SqlFragment { QString sql; QVariantList values; }`).
 `SearchService::search(request)` starts the work in the thread pool and returns the search number;
 the result arrives through the `finished(SearchResult)` signal.
 
@@ -453,16 +467,32 @@ Any input is valid: there are no syntax errors; a part that cannot be interprete
 |---|---|---|
 | `timeout` | the message contains the word (case-insensitive for Latin letters) | `r.message LIKE '%timeout%'` |
 | `"connection refused"` | the message contains the phrase | `r.message LIKE '%connection refused%'` |
-| `provider:bepaid` | a JSON field equals the value (case-insensitive) | `CAST(json_extract(r.fields, '$."provider"') AS TEXT) = ? COLLATE NOCASE` |
+| `provider:bepaid` | a JSON field equals the value (case-insensitive) | `<value of provider> = ? COLLATE NOCASE` |
 | `user:adm*` | field value by pattern, `*` = any characters | `… LIKE 'adm%'` |
 | `order_id:*` | the record has the field | `json_extract(…) IS NOT NULL` |
 | `-debug`, `-env:test` | exclude | `NOT coalesce(<condition>, 0)` |
 
-- `CAST(... AS TEXT)` makes `status:500` match both the number `500` and the string `"500"`.
+- Text in quotes is taken literally: `"provider:bepaid"` is text, `path:"/api/*"` is an exact value, `agent:"Mozilla 5.0"`
+  is a value with a space. Inside quotes `\"` stands for `"` and `\\` for `\`; a quote that is never closed runs to the
+  end of the line. `SearchQuery::quote()` writes any text as such a part ("Search for this value" uses it).
+- Only one leading `-` excludes (`--x` excludes the text `-x`); a lone `-` is text. `name:` with nothing after it is
+  text, so `Error:` finds the messages that contain it. `*` is a wildcard only in unquoted field values; in message text
+  it is an ordinary character.
+- A field name may contain only `A–Z a–z 0–9 _ . @ -` and is case-sensitive, like a JSON key; otherwise the part is plain
+  text. A drive letter is a valid name, so `C:\temp` is a field search — in quotes it is text.
+- **Values reach SQL only through bound parameters (`?`)**, the JSON path `$."name"` included — protection against SQL
+  injection. `%`, `_` and `\` in values are escaped (`ESCAPE '\'`).
+- `<value>` of a field is `CASE json_type(r.fields, ?) WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE
+  CAST(json_extract(r.fields, ?) AS TEXT) END`. `CAST(... AS TEXT)` makes `status:500` match both the number `500` and
+  the string `"500"`; JSON `true`/`false`, which `json_extract` returns as 1/0, compare as the words the record details
+  show (`_parse_error:true` finds unparsed lines). JSON `null` counts as no field.
+- Every field test starts with `instr(r.fields, ?) > 0`, bound to the name in quotes (`"provider"`). Every record with
+  the field passes it — LogVault writes fields with `QJsonDocument`, which escapes none of the name's characters — so
+  SQLite parses the JSON only of the records that can match.
 - `NOT coalesce(…, 0)` makes a record **without** the `env` field match `-env:test` (as in Kibana).
-- **Values reach SQL only through bound parameters (`?`)** — protection against SQL injection. A field name may contain
-  only `A–Z a–z 0–9 _ . @ -`; otherwise the part is treated as plain text. `%` and `_` in values are escaped.
-- Levels, sources and the period come from the UI controls (§2.2) and are added to the condition automatically.
+- Levels, sources and the period come from the UI controls (§2.2) and are added to the condition automatically:
+  `r.level IN (…)` (left out when all seven levels are on; no level on — nothing matches), `r.source_id IN (…)`,
+  `r.ts >= from`, `r.ts < to`.
 
 ### 6.3. Database queries (`LogStore`)
 
@@ -492,7 +522,10 @@ SELECT CAST(json_extract(r.fields, :path) AS TEXT), count(*)
 ### 6.4. Histogram
 
 - The step is the first of 1 s, 5 s, 15 s, 1 min, 5 min, 15 min, 1 h, 3 h, 12 h, 1 day, 7 days, 30 days that gives
-  at most 80 bars. The start is aligned down to a step boundary.
+  at most 80 bars (`Histogram::forRange`); a range longer than 80 × 30 days gets a multiple of 30 days. The start is
+  aligned down to a multiple of the step, counted from 1970-01-01 UTC.
+- The bars cover the period of the search. "All time" and other open-ended periods end at the oldest or the newest
+  match; a bounded period without matches still gets its empty bars, so the time axis stays.
 - Bars are stacked by level using the `Theme` colors; the tooltip shows the interval and per-level counts.
 - Drag-select → the "Custom range" period from the selection bounds → a new search. Esc restores the previous period.
 

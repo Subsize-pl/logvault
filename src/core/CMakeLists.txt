@@ -15,6 +15,8 @@ qt_add_library(lv_core STATIC
     LogStore.h
     Record.cpp
     Record.h
+    SearchQuery.cpp
+    SearchQuery.h
     TcpServer.cpp
     TcpServer.h
     TimeParser.cpp
