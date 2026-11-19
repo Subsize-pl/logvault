@@ -1,0 +1,27 @@
+#include "tst_environment.h"
+
+#include <QCoreApplication>
+#include <QTest>
+
+namespace {
+
+// Each test object is destroyed right after its own tests, so anything it owns (an open database, say)
+// is released before the next class starts.
+template <typename TestClass> int runTests(int argc, char *argv[]) {
+    TestClass tests;
+    return QTest::qExec(&tests, argc, argv);
+}
+
+} // namespace
+
+// Runs every test class; QTest command-line options apply to each of them.
+int main(int argc, char *argv[]) {
+    // Without a console window (ctest pipes, IDE runners) Qt on Windows sends test output and warnings to
+    // the debugger only. Force stdout/stderr so the results are always visible; must precede any output.
+    qputenv("QT_FORCE_STDERR_LOGGING", "1");
+    QCoreApplication app(argc, argv);
+
+    int failed = 0;
+    failed += runTests<TestEnvironment>(argc, argv);
+    return failed == 0 ? 0 : 1;
+}
