@@ -203,6 +203,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `TcpServer` | core | Listens on a port, manages connections, splits the byte stream into lines. |
 | `FileImporter` | core | Imports files in a worker thread: progress, cancel, summary. |
 | `Exporter` | core | Exports results to CSV / JSON Lines in a worker thread. |
+| `DatabaseJobs` | core | Opens a database file (creating a new one) and renames or deletes sources in a worker thread, one job at a time. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
 | `SettingsDialog`, `PeriodDialog`, `Theme` | gui | Settings, custom period, colors and palettes. |
@@ -215,7 +216,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
    ├──▶ intake thread (QThread): TcpServer → Ingestor → batched writes        [own DB connection]
    ├──▶ thread pool (QThreadPool): FileImporter → parsing → 1,000-record transactions [own DB connection]
    ├──▶ SearchService's own pool (2 threads) → span, histogram, rows, statistics [own DB connection, read-only]
-   └──▶ thread pool: Exporter, deleting old records                           [own DB connection]
+   └──▶ thread pool: DatabaseJobs (open, rename, delete), Exporter           [own DB connection]
 ```
 
 Rules:
@@ -229,9 +230,9 @@ Rules:
 - Every search gets a number (generation). If the user starts a new search, results of the old one are dropped, and
   the old one stops after its current query. Searches run in a pool of their own with two threads, so stale searches
   never take every core from the newest one.
-- Shutdown order: stop the server → `Ingestor` writes the pending batch → cancel import and export → wait for the
-  thread pools (`SearchService` waits for its own searches when destroyed) → `quit()` + `wait()` the intake thread →
-  close connections.
+- Shutdown order: stop the server → `Ingestor` writes the pending batch → cancel import, export and database jobs →
+  wait for the thread pools (`SearchService` waits for its own searches when destroyed) → `quit()` + `wait()` the
+  intake thread → close connections. The same order applies when another database is opened.
 
 ### 3.4. The path of one log line (under the hood)
 
@@ -585,7 +586,7 @@ logvault/
 ├── CMakePresets.json
 ├── src/
 │   ├── core/       Record, TimeParser, LineParser, Database, LogStore, SearchQuery, SearchService,
-│   │               LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
+│   │               DatabaseJobs, LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
 │                   HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView, SettingsDialog,
 │                   Theme, resources.qrc (application icon)

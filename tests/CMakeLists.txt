@@ -3,6 +3,8 @@ qt_add_executable(lv_tests
     IntakeRig.h
     StoredRecords.h
     main.cpp
+    tst_databasejobs.cpp
+    tst_databasejobs.h
     tst_environment.cpp
     tst_environment.h
     tst_fileimporter.cpp
