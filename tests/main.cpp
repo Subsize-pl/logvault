@@ -1,4 +1,5 @@
 #include "tst_environment.h"
+#include "tst_lineparser.h"
 #include "tst_storage.h"
 #include "tst_timeparser.h"
 
@@ -27,5 +28,6 @@ int main(int argc, char* argv[]) {
     failed += runTests<TestEnvironment>(argc, argv);
     failed += runTests<TestStorage>(argc, argv);
     failed += runTests<TestTimeParser>(argc, argv);
+    failed += runTests<TestLineParser>(argc, argv);
     return failed == 0 ? 0 : 1;
 }

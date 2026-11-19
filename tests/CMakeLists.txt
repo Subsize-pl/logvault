@@ -3,6 +3,8 @@ qt_add_executable(lv_tests
     main.cpp
     tst_environment.cpp
     tst_environment.h
+    tst_lineparser.cpp
+    tst_lineparser.h
     tst_storage.cpp
     tst_storage.h
     tst_timeparser.cpp
