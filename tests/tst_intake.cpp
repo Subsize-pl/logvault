@@ -2,18 +2,134 @@
 
 #include "Database.h"
 #include "Ingestor.h"
+#include "LineSplitter.h"
 #include "StoredRecords.h"
+#include "TcpServer.h"
 
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QHash>
+#include <QHostAddress>
 #include <QSignalSpy>
 #include <QSqlError>
 #include <QSqlQuery>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTest>
+#include <QThread>
+
+#include <vector>
 
 namespace {
 
 const QString kTcpSource = QStringLiteral("tcp");
+constexpr int kWaitMs = 10'000;
+
+// Runs a TcpServer and an Ingestor in a thread of their own, wired the way the application wires them:
+// both are created, moved to the thread and connected, the thread starts, and then they are started in it
+// through queued calls. The public members are updated in the test thread, as GUI slots would be.
+class IntakeRig : public QObject {
+public:
+    explicit IntakeRig(const QString& databasePath) : m_ingestor(new Ingestor), m_server(new TcpServer) {
+        m_ingestor->moveToThread(&m_thread);
+        m_server->moveToThread(&m_thread);
+        // Each is deleted in the intake thread once the thread finishes.
+        connect(&m_thread, &QThread::finished, m_ingestor, &QObject::deleteLater);
+        connect(&m_thread, &QThread::finished, m_server, &QObject::deleteLater);
+        // Both live in the intake thread, so lines are handed over by a direct call.
+        connect(m_server, &TcpServer::linesReceived, m_ingestor, &Ingestor::addLines);
+        connect(m_ingestor, &Ingestor::recordsWritten, this, [this](int count) { written += count; });
+        connect(m_ingestor, &Ingestor::errorOccurred, this,
+                [this](const QString& message) { errors += message; });
+        connect(m_server, &TcpServer::errorOccurred, this,
+                [this](const QString& message) { errors += message; });
+        connect(m_server, &TcpServer::statsChanged, this, [this](const ReceiverStats& received) {
+            stats = received;
+            maxLinesPerSecond = qMax(maxLinesPerSecond, received.linesPerSecond);
+        });
+        m_thread.start();
+        QMetaObject::invokeMethod(
+            m_ingestor, [this, databasePath] { ingestorStarted = m_ingestor->start(databasePath); },
+            Qt::BlockingQueuedConnection);
+    }
+
+    ~IntakeRig() override { shutdown(); }
+
+    /// Starts listening on 127.0.0.1 (a free port if port is 0).
+    bool listen(quint16 port = 0) {
+        bool listening = false;
+        QMetaObject::invokeMethod(
+            m_server,
+            [this, port, &listening] {
+                listening = m_server->start(QHostAddress::LocalHost, port);
+                m_port = m_server->stats().port;
+            },
+            Qt::BlockingQueuedConnection);
+        return listening;
+    }
+
+    quint16 port() const { return m_port; }
+
+    /// The application's shutdown order: the server passes on unfinished lines, the ingestor writes them
+    /// and closes the database, then the thread ends and deletes both objects.
+    void shutdown() {
+        if (!m_thread.isRunning()) {
+            return;
+        }
+        QMetaObject::invokeMethod(
+            m_server,
+            [this] {
+                m_server->stop();
+                m_ingestor->stop();
+            },
+            Qt::BlockingQueuedConnection);
+        m_thread.quit();
+        m_thread.wait();
+    }
+
+    bool ingestorStarted = false;
+    qint64 written = 0;
+    QStringList errors;
+    ReceiverStats stats;
+    qint64 maxLinesPerSecond = 0;
+
+private:
+    QThread m_thread;
+    Ingestor* m_ingestor; // owned by the intake thread: deleted when it finishes
+    TcpServer* m_server;  // likewise
+    quint16 m_port = 0;
+};
+
+// A client connected from the test thread; null if it cannot connect.
+std::unique_ptr<QTcpSocket> connectClient(quint16 port) {
+    auto socket = std::make_unique<QTcpSocket>();
+    socket->connectToHost(QHostAddress::LocalHost, port);
+    if (!socket->waitForConnected(kWaitMs)) {
+        return nullptr;
+    }
+    // Every write leaves at once, so pieces of a line really arrive separately.
+    socket->setSocketOption(QAbstractSocket::LowDelayOption, 1);
+    return socket;
+}
+
+// Writes data and waits until the socket has handed all of it to the system.
+bool sendAll(QTcpSocket& socket, const QByteArray& data) {
+    if (socket.write(data) != data.size()) {
+        return false;
+    }
+    while (socket.bytesToWrite() > 0) {
+        if (!socket.waitForBytesWritten(kWaitMs)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Closes the connection the way a client program does when it exits.
+bool disconnectClient(QTcpSocket& socket) {
+    socket.disconnectFromHost();
+    return socket.state() == QAbstractSocket::UnconnectedState || socket.waitForDisconnected(kWaitMs);
+}
 
 // JSON lines "line <first>" ... with consecutive numbers.
 QVector<ReceivedLine> makeLines(int count, int first = 0) {
@@ -179,4 +295,242 @@ void TestIntake::ingestorReportsFailedBatch() {
     ingestor.stop();
     QCOMPARE(written.count(), 1);
     QCOMPARE(storedRecords(path).size(), 2);
+}
+
+void TestIntake::receivesWholeLines() {
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.ingestorStarted);
+    QVERIFY(rig.listen());
+    const std::unique_ptr<QTcpSocket> client = connectClient(rig.port());
+    QVERIFY(client);
+    QVERIFY(sendAll(*client, "2026-11-19 14:05:01 INFO first\n"));
+    QVERIFY(sendAll(*client, R"({"level":"error","msg":"second","service":"api"})"
+                             "\n"));
+    QVERIFY(sendAll(*client, "third, with nothing to recognize\r\n"));
+    QTRY_COMPARE_WITH_TIMEOUT(rig.written, 3, kWaitMs);
+    rig.shutdown();
+
+    const QVector<Record> records = storedRecords(databasePath());
+    QCOMPARE(records.size(), 3);
+    QCOMPARE(records[0].level, Level::Info);
+    QCOMPARE(records[0].message, QStringLiteral("first"));
+    QCOMPARE(records[0].source, kTcpSource);
+    QCOMPARE(records[1].level, Level::Error);
+    QCOMPARE(records[1].message, QStringLiteral("second"));
+    QCOMPARE(records[1].source, QStringLiteral("api"));
+    QCOMPARE(records[2].raw, QStringLiteral("third, with nothing to recognize"));
+    QVERIFY(records[2].fields.contains(QStringLiteral("_parse_error")));
+    QVERIFY2(rig.errors.isEmpty(), qPrintable(rig.errors.join(u'\n')));
+}
+
+void TestIntake::receivesLineSplitAcrossWrites() {
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.listen());
+    const std::unique_ptr<QTcpSocket> client = connectClient(rig.port());
+    QVERIFY(client);
+
+    // Byte by byte...
+    const QByteArray first = R"({"level":"warn","msg":"Hello, byte by byte"})"
+                             "\n";
+    for (const char ch : first) {
+        QVERIFY(sendAll(*client, QByteArray(1, ch)));
+    }
+    // ...and in parts with pauses, so the server surely holds an unfinished line, even its '\r'.
+    QVERIFY(sendAll(*client, "2026-11-19 14:05:01 ERROR second "));
+    QTest::qWait(100);
+    QVERIFY(sendAll(*client, "half\r"));
+    QTest::qWait(100);
+    QVERIFY(sendAll(*client, "\n"));
+    QTRY_COMPARE_WITH_TIMEOUT(rig.written, 2, kWaitMs);
+    rig.shutdown();
+
+    const QVector<Record> records = storedRecords(databasePath());
+    QCOMPARE(records.size(), 2);
+    QCOMPARE(records[0].level, Level::Warn);
+    QCOMPARE(records[0].message, QStringLiteral("Hello, byte by byte"));
+    QCOMPARE(records[1].level, Level::Error);
+    QCOMPARE(records[1].message, QStringLiteral("second half"));
+    QCOMPARE(records[1].raw, QStringLiteral("2026-11-19 14:05:01 ERROR second half"));
+}
+
+void TestIntake::receivesManyLinesInOneWrite() {
+    constexpr int kLines = 2000;
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.listen());
+    const std::unique_ptr<QTcpSocket> client = connectClient(rig.port());
+    QVERIFY(client);
+
+    QByteArray data;
+    for (int i = 0; i < kLines; ++i) {
+        data += "INFO line " + QByteArray::number(i) + '\n';
+    }
+    QVERIFY(sendAll(*client, data));
+    QTRY_COMPARE_WITH_TIMEOUT(rig.written, kLines, kWaitMs);
+    rig.shutdown();
+
+    const QVector<Record> records = storedRecords(databasePath());
+    QCOMPARE(records.size(), kLines);
+    for (int i = 0; i < kLines; ++i) {
+        QCOMPARE(records[i].message, QStringLiteral("line %1").arg(i));
+    }
+}
+
+void TestIntake::receivesFromSeveralClients() {
+    constexpr int kClients = 5;
+    constexpr int kLines = 200;
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.listen());
+    std::vector<std::unique_ptr<QTcpSocket>> clients;
+    for (int c = 0; c < kClients; ++c) {
+        clients.push_back(connectClient(rig.port()));
+        QVERIFY(clients.back());
+    }
+
+    // The clients take turns, so their lines interleave on the server.
+    for (int i = 0; i < kLines; ++i) {
+        for (int c = 0; c < kClients; ++c) {
+            const QString line = QStringLiteral(R"({"service":"client-%1","msg":"line %2"})").arg(c).arg(i);
+            QVERIFY(sendAll(*clients[c], line.toUtf8() + '\n'));
+        }
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(rig.written, kClients * kLines, kWaitMs);
+    rig.shutdown();
+
+    // Each client's lines are all there, in the order that client sent them.
+    QHash<QString, int> nextLine;
+    for (const Record& record : storedRecords(databasePath())) {
+        QCOMPARE(record.message, QStringLiteral("line %1").arg(nextLine[record.source]++));
+    }
+    QCOMPARE(nextLine.size(), kClients);
+    for (const int count : std::as_const(nextLine)) {
+        QCOMPARE(count, kLines);
+    }
+}
+
+void TestIntake::keepsLastLineOfDroppedConnection() {
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.listen());
+    const std::unique_ptr<QTcpSocket> client = connectClient(rig.port());
+    QVERIFY(client);
+    QVERIFY(sendAll(*client, "INFO complete\nWARN cut off in the mid"));
+    QVERIFY(disconnectClient(*client));
+    QTRY_COMPARE_WITH_TIMEOUT(rig.written, 2, kWaitMs);
+    rig.shutdown();
+
+    const QVector<Record> records = storedRecords(databasePath());
+    QCOMPARE(records.size(), 2);
+    QCOMPARE(records[0].message, QStringLiteral("complete"));
+    QCOMPARE(records[1].level, Level::Warn);
+    QCOMPARE(records[1].message, QStringLiteral("cut off in the mid"));
+}
+
+void TestIntake::truncatesOversizedLine() {
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.listen());
+    const std::unique_ptr<QTcpSocket> client = connectClient(rig.port());
+    QVERIFY(client);
+
+    // A slow client: the long line arrives in many pieces.
+    const QByteArray huge(200'000, 'x');
+    for (qsizetype pos = 0; pos < huge.size(); pos += 10'000) {
+        QVERIFY(sendAll(*client, huge.mid(pos, 10'000)));
+    }
+    QVERIFY(sendAll(*client, "\nINFO after the long line\n"));
+    QTRY_COMPARE_WITH_TIMEOUT(rig.written, 2, kWaitMs);
+    rig.shutdown();
+
+    const QVector<Record> records = storedRecords(databasePath());
+    QCOMPARE(records.size(), 2);
+    QCOMPARE(records[0].raw.size(), LineSplitter::kMaxLineBytes);
+    QVERIFY2(records[0].fields.contains(QStringLiteral(R"("_truncated":true)")),
+             qPrintable(records[0].fields));
+    QCOMPARE(records[1].message, QStringLiteral("after the long line"));
+}
+
+void TestIntake::refusesConnectionsOverLimit() {
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.listen());
+    std::vector<std::unique_ptr<QTcpSocket>> clients;
+    for (int i = 0; i < TcpServer::kMaxConnections; ++i) {
+        clients.push_back(connectClient(rig.port()));
+        QVERIFY(clients.back());
+    }
+    // The server takes connections asynchronously; its stats show when all of them are in.
+    QTRY_COMPARE_WITH_TIMEOUT(rig.stats.connections.size(), TcpServer::kMaxConnections, kWaitMs);
+
+    // The system completes the handshake, then the server closes the connection at once.
+    const std::unique_ptr<QTcpSocket> extra = connectClient(rig.port());
+    QVERIFY(extra);
+    QVERIFY(extra->state() == QAbstractSocket::UnconnectedState || extra->waitForDisconnected(kWaitMs));
+
+    // The accepted clients keep working.
+    QVERIFY(sendAll(*clients.back(), "INFO still here\n"));
+    QTRY_COMPARE_WITH_TIMEOUT(rig.written, 1, kWaitMs);
+    QCOMPARE(rig.stats.connections.size(), TcpServer::kMaxConnections);
+}
+
+void TestIntake::reportsBusyPort() {
+    QTcpServer blocker;
+    QVERIFY(blocker.listen(QHostAddress::LocalHost, 0));
+    IntakeRig rig(databasePath());
+
+    QVERIFY(!rig.listen(blocker.serverPort()));
+    QTRY_VERIFY_WITH_TIMEOUT(!rig.errors.isEmpty(), kWaitMs);
+    const QString expected = QStringLiteral("Cannot listen on 127.0.0.1:%1").arg(blocker.serverPort());
+    QVERIFY2(rig.errors.first().startsWith(expected), qPrintable(rig.errors.first()));
+    QTRY_VERIFY_WITH_TIMEOUT(!rig.stats.error.isEmpty(), kWaitMs);
+    QVERIFY(!rig.stats.listening);
+
+    // The receiver can still start on a free port.
+    QVERIFY(rig.listen());
+    QTRY_VERIFY_WITH_TIMEOUT(rig.stats.listening, kWaitMs);
+    QVERIFY(rig.stats.error.isEmpty());
+}
+
+void TestIntake::stopPassesUnfinishedLines() {
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.listen());
+    const std::unique_ptr<QTcpSocket> client = connectClient(rig.port());
+    QVERIFY(client);
+    // Once the complete line is written, the unfinished one sent with it is surely in the server's buffer.
+    QVERIFY(sendAll(*client, "INFO complete\nINFO unfinished at shutdown"));
+    QTRY_COMPARE_WITH_TIMEOUT(rig.written, 1, kWaitMs);
+    rig.shutdown();
+
+    const QVector<Record> records = storedRecords(databasePath());
+    QCOMPARE(records.size(), 2);
+    QCOMPARE(records[1].message, QStringLiteral("unfinished at shutdown"));
+}
+
+void TestIntake::reportsStats() {
+    IntakeRig rig(databasePath());
+    QVERIFY(rig.listen());
+    QTRY_VERIFY_WITH_TIMEOUT(rig.stats.listening, kWaitMs);
+    QCOMPARE(rig.stats.address, QStringLiteral("127.0.0.1"));
+    QVERIFY(rig.port() != 0);
+    QCOMPARE(rig.stats.port, rig.port());
+
+    const qint64 before = QDateTime::currentMSecsSinceEpoch();
+    const std::unique_ptr<QTcpSocket> client = connectClient(rig.port());
+    QVERIFY(client);
+    QVERIFY(sendAll(*client, "INFO one\nINFO two\nINFO three\n"));
+    QTRY_VERIFY_WITH_TIMEOUT(rig.stats.connections.size() == 1 && rig.stats.connections.first().lines == 3,
+                             kWaitMs);
+    const ConnectionInfo info = rig.stats.connections.first();
+    QVERIFY(info.id != 0);
+    QVERIFY2(info.address.startsWith(QStringLiteral("127.0.0.1:")), qPrintable(info.address));
+    QVERIFY(info.connectedAt >= before && info.connectedAt <= QDateTime::currentMSecsSinceEpoch());
+    QCOMPARE(rig.stats.totalLines, 3);
+    // The rate covers the second in which the lines arrived.
+    QTRY_VERIFY_WITH_TIMEOUT(rig.maxLinesPerSecond >= 1, kWaitMs);
+    QVERIFY(rig.maxLinesPerSecond <= 3);
+
+    // A closed connection leaves the list; the total stays.
+    QVERIFY(disconnectClient(*client));
+    QTRY_VERIFY_WITH_TIMEOUT(rig.stats.connections.isEmpty(), kWaitMs);
+    QCOMPARE(rig.stats.totalLines, 3);
+
+    // stop() reports the stopped state at once.
+    rig.shutdown();
+    QTRY_VERIFY_WITH_TIMEOUT(!rig.stats.listening, kWaitMs);
 }

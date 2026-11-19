@@ -22,6 +22,17 @@ private slots:
     void ingestorReportsLinesWithoutDatabase();
     void ingestorReportsFailedBatch();
 
+    void receivesWholeLines();
+    void receivesLineSplitAcrossWrites();
+    void receivesManyLinesInOneWrite();
+    void receivesFromSeveralClients();
+    void keepsLastLineOfDroppedConnection();
+    void truncatesOversizedLine();
+    void refusesConnectionsOverLimit();
+    void reportsBusyPort();
+    void stopPassesUnfinishedLines();
+    void reportsStats();
+
 private:
     QString databasePath() const;
 

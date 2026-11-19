@@ -354,12 +354,14 @@ $w.WriteLine('{"level":"error","service":"test","msg":"Hello from PowerShell"}')
 
 - `QTcpServer::listen(address, port)`; a failure (port busy, no permission) → `errorOccurred(message)` signal and the
   "error" state.
-- New connection → its own buffer (`QByteArray`) and line counter; `clientConnected(id, address)` signal.
+- New connection → its own buffer (a `LineSplitter` holding a `QByteArray`) and line counter.
   Above 50 connections a new one is closed immediately.
-- `readyRead` → append the bytes to the buffer → cut out all complete lines → pass them to `Ingestor` with the default
-  source. If the buffer reaches 64 KB without `\n`, it is passed on as a truncated line.
-- Disconnect → the rest of the buffer (if not empty) becomes the last line → `clientDisconnected(id)` → `deleteLater()`.
-- Once per second → `statsChanged(connections, lines per second, total lines)` for the Receiver panel.
+- `readyRead` → append the bytes to the buffer → cut out all complete lines → pass them to `Ingestor`
+  (`linesReceived` signal) with the default source. If the buffer reaches 64 KB without `\n`, it is passed on as a
+  truncated line and the rest of that line is skipped.
+- Disconnect → the rest of the buffer (if not empty) becomes the last line → `deleteLater()`.
+- Once per second, and on every start and stop → `statsChanged(ReceiverStats)` for the Receiver panel: state
+  (listening, address, port, error), connections (id, address, connected at, lines), lines per second, total lines.
 - Stop: close the listening socket and all connections, pass the buffer leftovers to `Ingestor`.
 
 ### 5.3. File import (`FileImporter`, thread pool)
