@@ -15,7 +15,10 @@ One stage per session, in order (see `docs/DESIGN.md` §9). Update this file at 
 
 ## Environment
 
-- MSYS2 UCRT64 (`C:\msys64\ucrt64`), installed packages: _filled in below after installation_.
+- MSYS2 UCRT64 (`C:\msys64\ucrt64`), updated 2026-11-19. Installed: GCC 16.2.0, CMake 4.5.0, Ninja 1.13.2,
+  Qt 6.12.0 (`qt6-base`), SQLite 3.54.1.
+- Verified with a throwaway CMake project: Qt compiles and runs, the `QSQLITE` driver is available,
+  `json_extract` works.
 - CLion must be switched to the MSYS2 toolchain by the author (one-time): *Settings → Build, Execution, Deployment →
   Toolchains → + MinGW*, path `C:\msys64\ucrt64`, make it the default. Agents build from the command line.
 

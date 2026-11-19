@@ -608,7 +608,7 @@ Stage 1 must include a test proving that the `QSQLITE` driver is available and `
 **Running:** from CLion, or from a shell with `C:\msys64\ucrt64\bin` in `PATH`. The demo runs on the author's laptop,
 so no deployment packaging (`windeployqt`) is needed.
 
-**Git.** Public GitHub repository `logvault`. `main` always builds; each stage is developed on a branch
+**Git.** Public GitHub repository https://github.com/Subsize-pl/logvault. `main` always builds; each stage is developed on a branch
 `stage-N-<name>` and merged into `main` when done. Conventional Commits: `feat: …`, `fix: …`, `test: …`, `docs: …`,
 `refactor: …`, `chore: …`.
 

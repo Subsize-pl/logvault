@@ -5,6 +5,7 @@ in SQLite and lets the user search, filter and analyze them. It is a university 
 
 - Full design: `docs/DESIGN.md` — the single source of truth.
 - Progress and handoff notes: `docs/PROGRESS.md`.
+- Repository: https://github.com/Subsize-pl/logvault (public).
 
 ## How a session works
 
