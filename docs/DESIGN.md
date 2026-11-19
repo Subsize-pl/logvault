@@ -451,6 +451,7 @@ struct SearchResult {
     qint64  total = 0;               // total number of matches
     Histogram histogram;             // no bars when nothing matches and the period is unbounded
     QVector<StatsRow> stats;         // only when statsMode != None; largest groups first
+    QVector<SourceInfo> sources;     // every source and its record count, for the Sources panel and the status bar
     qint64  elapsedMs = 0;
     QString error;                   // empty = success; otherwise the other members are empty
 };
@@ -461,7 +462,8 @@ values (`SqlFragment { QString sql; QVariantList values; }`).
 `SearchService::search(request)` starts the work in the thread pool and returns the search number;
 the result arrives through the `finished(SearchResult)` signal. A failed search (no database, a missing or foreign file,
 an invalid statistics field) is a result with `error` set. A result is dropped when a newer search or
-`setDatabasePath()` came after its start; a running stale search stops between its queries.
+`setDatabasePath()` came after its start; a running stale search stops between its queries. The sources and their counts
+are read in the same transaction, so the GUI thread never needs a database connection of its own.
 
 ### 6.2. Search line
 

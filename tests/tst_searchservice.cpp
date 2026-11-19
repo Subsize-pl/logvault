@@ -118,6 +118,32 @@ void TestSearchService::deliversResult() {
     QCOMPARE(result->rows.first().message, QStringLiteral("Request 7 done"));
 }
 
+void TestSearchService::deliversSourcesWithEveryResult() {
+    QVector<Record> records = makeRecords(50, kT);
+    for (qsizetype i = 45; i < records.size(); ++i) {
+        records[i].source = QStringLiteral("Web");
+    }
+    QString error;
+    QVERIFY2(writeRecords(databasePath(), records, &error), qPrintable(error));
+
+    SearchService service;
+    service.setDatabasePath(databasePath());
+    // The Sources panel and "Found X of Y" show every record, whatever the search matches, even nothing.
+    for (const QString& text :
+         {QString(), QStringLiteral("\"Request 7 \""), QStringLiteral("nothing-matches")}) {
+        SearchRequest request;
+        request.text = text;
+        const std::optional<SearchResult> result = runSearch(service, request);
+        QVERIFY(result);
+        QVERIFY2(result->error.isEmpty(), qPrintable(result->error));
+        QCOMPARE(result->sources.size(), 2);
+        QCOMPARE(result->sources[0].name, QStringLiteral("app"));
+        QCOMPARE(result->sources[0].recordCount, 45);
+        QCOMPARE(result->sources[1].name, QStringLiteral("Web"));
+        QCOMPARE(result->sources[1].recordCount, 5);
+    }
+}
+
 void TestSearchService::computesStatisticsOnlyWhenAsked() {
     QString error;
     QVERIFY2(writeRecords(databasePath(), makeRecords(50, kT), &error), qPrintable(error));

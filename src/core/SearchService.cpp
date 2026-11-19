@@ -87,9 +87,16 @@ void SearchJob::searchIn(const QString& databasePath) {
         fail(store.errorString());
         return;
     }
-    // One read transaction: the total, the rows, the histogram and the statistics all describe the same
-    // records, even while intake keeps writing.
+    // One read transaction: the total, the rows, the histogram, the statistics and the source counts all
+    // describe the same records, even while intake keeps writing.
     query(store);
+    if (m_result.error.isEmpty() && !isStale()) {
+        if (std::optional<QVector<SourceInfo>> sources = store.sources()) {
+            m_result.sources = std::move(*sources);
+        } else {
+            fail(store.errorString());
+        }
+    }
     store.endRead();
 }
 
