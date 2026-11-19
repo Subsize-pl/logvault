@@ -4,10 +4,10 @@
 
 #include <QLabel>
 
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(AppInfo::name());
 
-    auto *placeholder = new QLabel(tr("No database is open"), this);
+    auto* placeholder = new QLabel(tr("No database is open"), this);
     placeholder->setAlignment(Qt::AlignCenter);
     setCentralWidget(placeholder);
 

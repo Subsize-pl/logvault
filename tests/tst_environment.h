@@ -6,7 +6,7 @@
 class TestEnvironment : public QObject {
     Q_OBJECT
 
-  private slots:
+private slots:
     void sqliteDriverIsAvailable();
     void jsonExtractReadsNestedField();
     void walModeCanBeEnabled();
