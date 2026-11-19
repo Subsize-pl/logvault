@@ -26,6 +26,19 @@ private slots:
     void rejectsMissingDirectory();
     void opensPathWithSpacesAndNonAscii();
 
+    void reopenKeepsRecords();
+    void insertsHundredThousandRecordsQuickly();
+    void createsSourcesWithCounts();
+    void storesEmptyTextsAndSkipsEmptyBatch();
+    void failedBatchWritesNothing();
+    void renamesSource();
+    void rejectsBadRenames();
+    void deleteSourceRemovesItsRecords();
+    void deleteSourceCanBeCancelled();
+    void deleteOlderThanIsStrict();
+    void unicodeRoundTrip();
+    void writersAndReaderInParallel();
+
 private:
     QString databasePath(const QString& fileName = QStringLiteral("test.lvdb")) const;
 
