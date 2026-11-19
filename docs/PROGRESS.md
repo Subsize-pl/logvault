@@ -50,7 +50,8 @@ One stage per session, in order (see `docs/DESIGN.md` §9). Update this file at 
   - `lv_tests` — `tests`, one Qt Test executable, registered with `add_test`, environment `QT_QPA_PLATFORM=offscreen`.
 - Executables land in the build root (`build/debug/LogVault.exe`, `build/debug/lv_tests.exe`):
   `qt_standard_project_setup()` sets `CMAKE_RUNTIME_OUTPUT_DIRECTORY` on Windows.
-- `.clang-format` (LLVM, indent 4, column limit 110); "Building" section in `README.md`.
+- `.clang-format` (LLVM, indent 4, column limit 110, `PointerAlignment: Left`, `AccessModifierOffset: -4`);
+  "Building" section in `README.md`.
 
 **Tests**
 
@@ -85,5 +86,5 @@ One stage per session, in order (see `docs/DESIGN.md` §9). Update this file at 
 - Call `lv_enable_warnings()` for every new target, and list headers in the target sources too (AUTOMOC).
 - MSYS2 has no clang-format. Use CLion (it picks up `.clang-format`) or its bundled binary:
   `"C:\Program Files\JetBrains\CLion 2026.2.3\plugins\clion-radler\DotFiles\windows-x64\clang-format.exe" -i <files>`.
-  The LLVM base formats pointers and references as `Type *name` and indents `public:` by 2, unlike the `Type& name`
-  in the §7.3 sample; asked the author whether to add `PointerAlignment: Left` and `AccessModifierOffset: -4`.
+  The author chose `Type* name` and unindented `public:` / `private:` (DESIGN §7.3, §12), so `.clang-format` adds
+  `PointerAlignment: Left` and `AccessModifierOffset: -4` to the LLVM base.

@@ -563,7 +563,8 @@ logvault/
 - Signals and slots only with the pointer-to-member syntax: `connect(a, &A::signal, b, &B::slot)`.
 - No singletons or global variables; dependencies are passed through constructors.
 - User-visible strings in English, wrapped in `tr()`.
-- Formatting: `.clang-format` (based on LLVM, indent 4, column limit 110).
+- Formatting: `.clang-format` (based on LLVM, indent 4, column limit 110, `Type* name` / `Type& name`,
+  `public:` and `private:` not indented).
 
 **Comments — a reasonable amount, in a consistent format:**
 - Every class gets a short `///` comment in its header (one or two sentences: what it is responsible for).
@@ -686,3 +687,4 @@ Target `lv_tests`, Qt Test (`QTest`, `QSignalSpy`). Coverage:
 | Repository | Public GitHub repository `logvault`. |
 | Language | English for UI, code comments and all documents; the author is addressed in Russian in chat. |
 | Process | One stage per session, in order; each session updates `docs/PROGRESS.md`. |
+| Code formatting | LLVM base plus `PointerAlignment: Left` and `AccessModifierOffset: -4`, matching the §7.3 sample. |
