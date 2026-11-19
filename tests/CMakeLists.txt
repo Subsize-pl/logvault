@@ -1,8 +1,11 @@
 qt_add_executable(lv_tests
     ConnectionGuard.h
+    StoredRecords.h
     main.cpp
     tst_environment.cpp
     tst_environment.h
+    tst_intake.cpp
+    tst_intake.h
     tst_lineparser.cpp
     tst_lineparser.h
     tst_linesplitter.cpp
