@@ -214,7 +214,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
    │   (signals and slots: Qt passes them between threads through the event queue)
    ├──▶ intake thread (QThread): TcpServer → Ingestor → batched writes        [own DB connection]
    ├──▶ thread pool (QThreadPool): FileImporter → parsing → 1,000-record transactions [own DB connection]
-   ├──▶ thread pool: SearchService → rows, counts, histogram, statistics      [own DB connection, read-only]
+   ├──▶ SearchService's own pool (2 threads) → span, histogram, rows, statistics [own DB connection, read-only]
    └──▶ thread pool: Exporter, deleting old records                           [own DB connection]
 ```
 
@@ -226,9 +226,12 @@ Rules:
 - WAL mode: reads do not block writes, so searching works during intake.
 - Threads communicate only through signals and slots; cancellation uses a `std::atomic<bool>` flag.
   No shared mutable data without protection.
-- Every search gets a number (generation). If the user starts a new search, results of the old one are dropped.
+- Every search gets a number (generation). If the user starts a new search, results of the old one are dropped, and
+  the old one stops after its current query. Searches run in a pool of their own with two threads, so stale searches
+  never take every core from the newest one.
 - Shutdown order: stop the server → `Ingestor` writes the pending batch → cancel import and export → wait for the
-  thread pool → `quit()` + `wait()` the intake thread → close connections.
+  thread pools (`SearchService` waits for its own searches when destroyed) → `quit()` + `wait()` the intake thread →
+  close connections.
 
 ### 3.4. The path of one log line (under the hood)
 
@@ -446,17 +449,19 @@ struct SearchResult {
     quint64 generation = 0;          // search number; stale results are dropped
     QVector<Record> rows;            // at most maxRows, newest first
     qint64  total = 0;               // total number of matches
-    Histogram histogram;             // start, step and per-level counts for each bar
-    QVector<StatsRow> stats;         // value, count
+    Histogram histogram;             // no bars when nothing matches and the period is unbounded
+    QVector<StatsRow> stats;         // only when statsMode != None; largest groups first
     qint64  elapsedMs = 0;
-    QString error;                   // empty = success
+    QString error;                   // empty = success; otherwise the other members are empty
 };
 ```
 
 `SearchQuery::build(request)` turns the filters and the search line into a condition over `records r` with its bound
 values (`SqlFragment { QString sql; QVariantList values; }`).
 `SearchService::search(request)` starts the work in the thread pool and returns the search number;
-the result arrives through the `finished(SearchResult)` signal.
+the result arrives through the `finished(SearchResult)` signal. A failed search (no database, a missing or foreign file,
+an invalid statistics field) is a result with `error` set. A result is dropped when a newer search or
+`setDatabasePath()` came after its start; a running stale search stops between its queries.
 
 ### 6.2. Search line
 

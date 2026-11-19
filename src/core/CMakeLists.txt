@@ -17,6 +17,8 @@ qt_add_library(lv_core STATIC
     Record.h
     SearchQuery.cpp
     SearchQuery.h
+    SearchService.cpp
+    SearchService.h
     TcpServer.cpp
     TcpServer.h
     TimeParser.cpp

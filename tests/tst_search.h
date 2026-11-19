@@ -7,7 +7,8 @@
 #include <memory>
 
 /// Checks the search queries of LogStore on a database with known records: order and limits, the search
-/// line and the filters on real data, the histogram and its step, statistics and the read snapshot.
+/// line and the filters on real data, the histogram and its step, statistics, the read snapshot, and (with
+/// LV_PERF=1) the speed on 1,000,000 records.
 class TestSearch : public QObject {
     Q_OBJECT
 
@@ -42,6 +43,7 @@ private slots:
 
     void readTransactionKeepsOneState();
 
+    void searchesMillionRecordsQuickly();
 
 private:
     QString databasePath() const;

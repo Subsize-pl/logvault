@@ -4,9 +4,12 @@
 #include "LogStore.h"
 #include "Record.h"
 #include "SearchQuery.h"
+#include "SearchService.h"
 
+#include <QElapsedTimer>
 #include <QList>
 #include <QRandomGenerator>
+#include <QSignalSpy>
 #include <QStringList>
 #include <QTest>
 
@@ -224,6 +227,71 @@ qint64 barsFor(qint64 first, qint64 last, qint64 step) {
 
 // Two letters per number below 676, so generated texts differ without digits (msg_key replaces those).
 QString letters(int number) { return QString(QChar(u'a' + number / 26)) + QChar(u'a' + number % 26); }
+
+// One record of the generated shop of the performance test; the same index always gives the same record.
+Record generatedRecord(int index, QRandomGenerator& random) {
+    static const QStringList services = {QStringLiteral("gateway"), QStringLiteral("auth"),
+                                         QStringLiteral("cart"), QStringLiteral("payment")};
+    static const QStringList providers = {QStringLiteral("bepaid"), QStringLiteral("stripe"),
+                                          QStringLiteral("paypal")};
+    static const QStringList paths = {QStringLiteral("cart"), QStringLiteral("order"),
+                                      QStringLiteral("item")};
+
+    const int roll = random.bounded(1000);
+    const Level level = roll < 20    ? Level::Trace
+                        : roll < 170 ? Level::Debug
+                        : roll < 820 ? Level::Info
+                        : roll < 920 ? Level::Warn
+                        : roll < 990 ? Level::Error
+                        : roll < 995 ? Level::Fatal
+                                     : Level::Unknown;
+    const QString service = services[random.bounded(4)];
+    const int user = random.bounded(5000);
+    QString message;
+    QString fields = QStringLiteral(R"("user_id":%1,"env":"%2")")
+                         .arg(user)
+                         .arg(random.bounded(10) == 0 ? QStringLiteral("test") : QStringLiteral("prod"));
+    if (service == QLatin1String("payment")) {
+        const int order = 10000 + index;
+        const QString provider = level == Level::Error && random.bounded(5) != 0
+                                     ? QStringLiteral("bepaid")
+                                     : providers[random.bounded(providers.size())];
+        const int latency = level == Level::Error ? 3000 + random.bounded(2000) : 150 + random.bounded(750);
+        message = level == Level::Error ? QStringLiteral("Payment provider timeout after %1 ms").arg(latency)
+                                        : QStringLiteral("Payment for order %1 authorized by %2 in %3 ms")
+                                              .arg(order)
+                                              .arg(provider)
+                                              .arg(latency);
+        fields += QStringLiteral(R"(,"provider":"%1","order_id":%2,"latency_ms":%3)")
+                      .arg(provider)
+                      .arg(order)
+                      .arg(latency);
+    } else if (service == QLatin1String("gateway")) {
+        const int status = level == Level::Error ? 500 : level == Level::Warn ? 404 : 200;
+        const int latency = 5 + random.bounded(175);
+        message = QStringLiteral("GET /api/%1 %2 in %3 ms")
+                      .arg(paths[random.bounded(paths.size())])
+                      .arg(status)
+                      .arg(latency);
+        fields += QStringLiteral(R"(,"http.status":%1,"latency_ms":%2)").arg(status).arg(latency);
+    } else if (service == QLatin1String("auth")) {
+        message = level >= Level::Warn ? QStringLiteral("Invalid password for user %1").arg(user)
+                                       : QStringLiteral("User %1 logged in").arg(user);
+    } else {
+        const int cartId = random.bounded(100000);
+        message = level >= Level::Warn
+                      ? QStringLiteral("Cart %1 not found").arg(cartId)
+                      : QStringLiteral("Item %1 added to cart %2").arg(random.bounded(900)).arg(cartId);
+        fields += QStringLiteral(R"(,"cart_id":%1)").arg(cartId);
+    }
+
+    Record record = makeRecord(kT - 7 * kDay + qint64(index) * 600, level, service, message,
+                               QLatin1Char('{') + fields + QLatin1Char('}'));
+    record.raw = QStringLiteral(R"({"time":%1,"level":"%2","service":"%3","msg":"%4",%5})")
+                     .arg(record.ts)
+                     .arg(levelName(level).toLower(), service, message, fields);
+    return record;
+}
 
 } // namespace
 
@@ -826,4 +894,84 @@ void TestSearch::readTransactionKeepsOneState() {
 
     QCOMPARE(store.recordCount().value_or(-1), kFixtureSize + 1);
     QCOMPARE(store.matchSpan({}).value().lastTs, kT + 3 * kHour);
+}
+
+void TestSearch::searchesMillionRecordsQuickly() {
+    if (qEnvironmentVariable("LV_PERF") != QLatin1String("1")) {
+        QSKIP("Set LV_PERF=1 to run the performance test on 1,000,000 records (about a minute).");
+    }
+    constexpr int kRecords = 1'000'000;
+    constexpr int kBatch = 10'000;
+    {
+        Database database;
+        QVERIFY2(database.open(databasePath()), qPrintable(database.errorString()));
+        LogStore store(database);
+        QRandomGenerator random(42);
+        QElapsedTimer timer;
+        timer.start();
+        for (int first = 0; first < kRecords; first += kBatch) {
+            QVector<Record> batch;
+            batch.reserve(kBatch);
+            for (int i = first; i < first + kBatch; ++i) {
+                batch.append(generatedRecord(i, random));
+            }
+            QVERIFY2(store.insertBatch(batch), qPrintable(store.errorString()));
+        }
+        qInfo("perf: %d records written in %lld ms", kRecords, timer.elapsed());
+    }
+
+    // DESIGN.md section 1.4: a search usually takes at most a second on 1,000,000 records. Statistics over
+    // all of them read every record twice (bars and groups), so they may take a little longer.
+    constexpr qint64 kUsualMs = 1000;
+    constexpr qint64 kStatisticsOfAllMs = 1500;
+    struct Case {
+        const char* name;
+        SearchRequest request;
+        qint64 limitMs = kUsualMs;
+    };
+    const qint64 newest = kT - 7 * kDay + qint64(kRecords - 1) * 600;
+    QVector<Case> cases;
+    cases.append({"all records", SearchRequest()});
+    cases.append({"word: timeout", SearchRequest()});
+    cases.back().request.text = QStringLiteral("timeout");
+    cases.append({"field: provider:bepaid", SearchRequest()});
+    cases.back().request.text = QStringLiteral("provider:bepaid");
+    cases.append({"levels ERROR+FATAL, last 24 hours", SearchRequest()});
+    cases.back().request.levels = {Level::Error, Level::Fatal};
+    cases.back().request.from = newest + 1 - kDay;
+    cases.back().request.to = newest + 1;
+    cases.append({"word + field + exclusion", SearchRequest()});
+    cases.back().request.text = QStringLiteral("timeout provider:bepaid -env:test");
+    cases.append({"stats by similar messages, ERROR only", SearchRequest()});
+    cases.back().request.levels = {Level::Error};
+    cases.back().request.statsMode = StatsMode::Message;
+    cases.append({"stats by similar messages, all records", SearchRequest(), kStatisticsOfAllMs});
+    cases.back().request.statsMode = StatsMode::Message;
+    cases.append({"stats by field provider, all records", SearchRequest(), kStatisticsOfAllMs});
+    cases.back().request.statsMode = StatsMode::Field;
+    cases.back().request.statsField = QStringLiteral("provider");
+
+    SearchService service;
+    service.setDatabasePath(databasePath());
+    QSignalSpy finished(&service, &SearchService::finished);
+    QStringList tooSlow;
+    for (const Case& test : cases) {
+        // The second run shows the usual time; the first one also warms the caches.
+        for (int run = 0; run < 2; ++run) {
+            finished.clear();
+            service.search(test.request);
+            QVERIFY(finished.wait(60'000));
+            const SearchResult result = finished.first().first().value<SearchResult>();
+            QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+            QVERIFY(result.total > 0);
+            if (run == 1) {
+                qInfo("perf: %-40s %5lld ms, %7lld matches", test.name, result.elapsedMs, result.total);
+                if (result.elapsedMs > test.limitMs) {
+                    tooSlow.append(
+                        QStringLiteral("%1: %2 ms").arg(QLatin1String(test.name)).arg(result.elapsedMs));
+                }
+            }
+        }
+    }
+    QVERIFY2(tooSlow.isEmpty(), qPrintable(tooSlow.join(QStringLiteral("; "))));
 }

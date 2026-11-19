@@ -19,6 +19,8 @@ qt_add_executable(lv_tests
     tst_search.h
     tst_searchquery.cpp
     tst_searchquery.h
+    tst_searchservice.cpp
+    tst_searchservice.h
     tst_storage.cpp
     tst_storage.h
     tst_timeparser.cpp
