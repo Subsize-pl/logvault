@@ -3,8 +3,11 @@
 #include "Record.h"
 
 #include <QByteArray>
+#include <QJsonValue>
 #include <QString>
 #include <QStringView>
+
+#include <optional>
 
 /// A line as it was received or read from a file, before parsing.
 struct ReceivedLine {
@@ -26,5 +29,9 @@ Record parse(const ReceivedLine& line, bool* ok = nullptr);
 
 /// The level for a name or synonym, case-insensitive ("warning" -> Level::Warn); Level::Unknown otherwise.
 Level levelFromName(QStringView name);
+
+/// The text of a JSON string, number or boolean as records keep it and the search compares it: whole numbers
+/// with every digit, booleans as "true" and "false". Nothing for null, objects and arrays.
+std::optional<QString> scalarText(const QJsonValue& value);
 
 } // namespace LineParser
