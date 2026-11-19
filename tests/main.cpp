@@ -4,6 +4,9 @@
 #include "tst_lineparser.h"
 #include "tst_linesplitter.h"
 #include "tst_pythonclient.h"
+#include "tst_search.h"
+#include "tst_searchquery.h"
+#include "tst_searchservice.h"
 #include "tst_storage.h"
 #include "tst_timeparser.h"
 
@@ -37,5 +40,8 @@ int main(int argc, char* argv[]) {
     failed += runTests<TestIntake>(argc, argv);
     failed += runTests<TestFileImporter>(argc, argv);
     failed += runTests<TestPythonClient>(argc, argv);
+    failed += runTests<TestSearchQuery>(argc, argv);
+    failed += runTests<TestSearch>(argc, argv);
+    failed += runTests<TestSearchService>(argc, argv);
     return failed == 0 ? 0 : 1;
 }

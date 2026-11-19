@@ -214,7 +214,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
    │   (signals and slots: Qt passes them between threads through the event queue)
    ├──▶ intake thread (QThread): TcpServer → Ingestor → batched writes        [own DB connection]
    ├──▶ thread pool (QThreadPool): FileImporter → parsing → 1,000-record transactions [own DB connection]
-   ├──▶ thread pool: SearchService → rows, counts, histogram, statistics      [own DB connection, read-only]
+   ├──▶ SearchService's own pool (2 threads) → span, histogram, rows, statistics [own DB connection, read-only]
    └──▶ thread pool: Exporter, deleting old records                           [own DB connection]
 ```
 
@@ -226,9 +226,12 @@ Rules:
 - WAL mode: reads do not block writes, so searching works during intake.
 - Threads communicate only through signals and slots; cancellation uses a `std::atomic<bool>` flag.
   No shared mutable data without protection.
-- Every search gets a number (generation). If the user starts a new search, results of the old one are dropped.
+- Every search gets a number (generation). If the user starts a new search, results of the old one are dropped, and
+  the old one stops after its current query. Searches run in a pool of their own with two threads, so stale searches
+  never take every core from the newest one.
 - Shutdown order: stop the server → `Ingestor` writes the pending batch → cancel import and export → wait for the
-  thread pool → `quit()` + `wait()` the intake thread → close connections.
+  thread pools (`SearchService` waits for its own searches when destroyed) → `quit()` + `wait()` the intake thread →
+  close connections.
 
 ### 3.4. The path of one log line (under the hood)
 
@@ -421,28 +424,44 @@ $w.WriteLine('{"level":"error","service":"test","msg":"Hello from PowerShell"}')
 enum class StatsMode { None, Level, Source, Message, Field };
 
 struct SearchRequest {
-    QList<Level>  levels;            // enabled levels
+    QList<Level>  levels = { all seven };  // enabled levels; empty = nothing matches
     QList<qint64> sourceIds;         // empty = all sources
-    qint64  from = 0, to = 0;        // ms UTC; 0 = unbounded
+    qint64  from = 0, to = 0;        // ms UTC, from inclusive, to exclusive; 0 = unbounded
     QString text;                    // search line (§6.2)
     int     maxRows = 10000;
     StatsMode statsMode = StatsMode::None;   // statistics are computed only while the Statistics tab is open
     QString   statsField;                    // for StatsMode::Field
 };
 
+struct Histogram {                   // §6.4
+    qint64 start = 0, step = 0;      // ms UTC; bar i covers [start + i*step, start + (i+1)*step)
+    QVector<std::array<qint64, 7>> bars;   // per bar, the count of each level (index = Level value)
+};
+
+struct StatsRow {                    // §6.5
+    QString value;                   // level name, source name, message pattern, field value or "(no field)"
+    qint64  count = 0;
+    qint64  id = 0;                  // level value or source id, for the double-click
+    bool    noField = false;         // field mode: the group of records without the field
+};
+
 struct SearchResult {
     quint64 generation = 0;          // search number; stale results are dropped
     QVector<Record> rows;            // at most maxRows, newest first
     qint64  total = 0;               // total number of matches
-    Histogram histogram;             // start, step and per-level counts for each bar
-    QVector<StatsRow> stats;         // value, count
+    Histogram histogram;             // no bars when nothing matches and the period is unbounded
+    QVector<StatsRow> stats;         // only when statsMode != None; largest groups first
     qint64  elapsedMs = 0;
-    QString error;                   // empty = success
+    QString error;                   // empty = success; otherwise the other members are empty
 };
 ```
 
+`SearchQuery::build(request)` turns the filters and the search line into a condition over `records r` with its bound
+values (`SqlFragment { QString sql; QVariantList values; }`).
 `SearchService::search(request)` starts the work in the thread pool and returns the search number;
-the result arrives through the `finished(SearchResult)` signal.
+the result arrives through the `finished(SearchResult)` signal. A failed search (no database, a missing or foreign file,
+an invalid statistics field) is a result with `error` set. A result is dropped when a newer search or
+`setDatabasePath()` came after its start; a running stale search stops between its queries.
 
 ### 6.2. Search line
 
@@ -453,55 +472,86 @@ Any input is valid: there are no syntax errors; a part that cannot be interprete
 |---|---|---|
 | `timeout` | the message contains the word (case-insensitive for Latin letters) | `r.message LIKE '%timeout%'` |
 | `"connection refused"` | the message contains the phrase | `r.message LIKE '%connection refused%'` |
-| `provider:bepaid` | a JSON field equals the value (case-insensitive) | `CAST(json_extract(r.fields, '$."provider"') AS TEXT) = ? COLLATE NOCASE` |
+| `provider:bepaid` | a JSON field equals the value (case-insensitive) | `<value of provider> = ? COLLATE NOCASE` |
 | `user:adm*` | field value by pattern, `*` = any characters | `… LIKE 'adm%'` |
 | `order_id:*` | the record has the field | `json_extract(…) IS NOT NULL` |
 | `-debug`, `-env:test` | exclude | `NOT coalesce(<condition>, 0)` |
 
-- `CAST(... AS TEXT)` makes `status:500` match both the number `500` and the string `"500"`.
+- Text in quotes is taken literally: `"provider:bepaid"` is text, `path:"/api/*"` is an exact value, `agent:"Mozilla 5.0"`
+  is a value with a space. Inside quotes `\"` stands for `"` and `\\` for `\`; a quote that is never closed runs to the
+  end of the line. `SearchQuery::quote()` writes any text as such a part ("Search for this value" uses it).
+- Only one leading `-` excludes (`--x` excludes the text `-x`); a lone `-` is text. `name:` with nothing after it is
+  text, so `Error:` finds the messages that contain it. `*` is a wildcard only in unquoted field values; in message text
+  it is an ordinary character.
+- A field name may contain only `A–Z a–z 0–9 _ . @ -` and is case-sensitive, like a JSON key; otherwise the part is plain
+  text. A drive letter is a valid name, so `C:\temp` is a field search — in quotes it is text.
+- **Values reach SQL only through bound parameters (`?`)**, the JSON path `$."name"` included — protection against SQL
+  injection. `%`, `_` and `\` in values are escaped (`ESCAPE '\'`).
+- `<value>` of a field is `CASE json_type(r.fields, ?) WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE
+  CAST(json_extract(r.fields, ?) AS TEXT) END`. `CAST(... AS TEXT)` makes `status:500` match both the number `500` and
+  the string `"500"`; JSON `true`/`false`, which `json_extract` returns as 1/0, compare as the words the record details
+  show (`_parse_error:true` finds unparsed lines). JSON `null` counts as no field.
+- Every field test starts with `instr(r.fields, ?) > 0`, bound to the name in quotes (`"provider"`). Every record with
+  the field passes it — LogVault writes fields with `QJsonDocument`, which escapes none of the name's characters — so
+  SQLite parses the JSON only of the records that can match.
 - `NOT coalesce(…, 0)` makes a record **without** the `env` field match `-env:test` (as in Kibana).
-- **Values reach SQL only through bound parameters (`?`)** — protection against SQL injection. A field name may contain
-  only `A–Z a–z 0–9 _ . @ -`; otherwise the part is treated as plain text. `%` and `_` in values are escaped.
-- Levels, sources and the period come from the UI controls (§2.2) and are added to the condition automatically.
+- Levels, sources and the period come from the UI controls (§2.2) and are added to the condition automatically:
+  `r.level IN (…)` (left out when all seven levels are on; no level on — nothing matches), `r.source_id IN (…)`,
+  `r.ts >= from`, `r.ts < to`.
 
 ### 6.3. Database queries (`LogStore`)
 
 ```sql
--- records (newest first)
-SELECT r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw
-FROM records r JOIN sources s ON s.id = r.source_id
-WHERE <F> ORDER BY r.ts DESC, r.id DESC LIMIT :maxRows;
+-- 1. the oldest and the newest match: SQLite walks the time index from one end and stops at the first match
+SELECT min(r.ts) FROM records r WHERE <F>;
+SELECT max(r.ts) FROM records r WHERE <F>;
 
--- total matches and their time span (for "All time" — to pick the histogram step)
-SELECT count(*), min(r.ts), max(r.ts) FROM records r WHERE <F>;
-
--- histogram
-SELECT (r.ts - :from) / :step AS bucket, r.level, count(*)
+-- 2. histogram over the period, or up to the oldest / newest match where it is unbounded ("All time");
+--    every match is in exactly one bar, so the bars also give the total
+SELECT (r.ts - :start) / :step AS bucket, r.level, count(*)
 FROM records r WHERE <F> GROUP BY bucket, r.level;
 
--- statistics: by level / source / similar messages / field
-SELECT r.level, count(*)   FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC;
-SELECT s.name,  count(*)   FROM records r JOIN sources s ON s.id = r.source_id WHERE <F> GROUP BY 1 ORDER BY 2 DESC;
-SELECT r.msg_key, count(*) FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC LIMIT 100;
-SELECT CAST(json_extract(r.fields, :path) AS TEXT), count(*)
-                           FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC LIMIT 100;   -- NULL = "(no field)"
+-- 3. records (newest first), searched only between the oldest and the newest match
+SELECT r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw
+FROM records r JOIN sources s ON s.id = r.source_id
+WHERE <F> AND r.ts >= :oldest AND r.ts < :newest + 1 ORDER BY r.ts DESC, r.id DESC LIMIT :maxRows;
+
+-- 4. statistics: by level / source / similar messages / field; largest groups first, ties by value
+SELECT r.level, count(*)   FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC, 1;
+SELECT s.name,  count(*)   FROM records r JOIN sources s ON s.id = r.source_id WHERE <F> GROUP BY s.id ORDER BY 2 DESC, 1;
+SELECT r.msg_key, count(*) FROM records r WHERE <F> GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 100;
+SELECT <value>, count(*), sum(count(*)) OVER () FROM records r WHERE <F> AND instr(r.fields, :quotedName) > 0
+GROUP BY 1 HAVING <value> IS NOT NULL ORDER BY 2 DESC, 1 LIMIT 100;   -- "(no field)" = total - the window sum
 ```
 
-`<F>` is the condition built from the UI filters and the search line (§6.2).
+`<F>` is the condition built from the UI filters and the search line (§6.2), `<value>` the field value of §6.2. All
+queries of one search run in one read transaction (`LogStore::beginRead()`), so they describe the same records while
+intake keeps writing.
+
+Why this shape: on 1,000,000 records one pass over the table takes about 0.3 s, and parsing the JSON of every record
+about as much again. A `count(*)` would be such a pass on its own, while `min()` and `max()` usually stop after a few
+records. The rows query stops at the oldest match instead of walking the whole time index when there are fewer matches
+than `maxRows`. Field statistics group only the records that mention the field and count "(no field)" by subtraction,
+so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4).
 
 ### 6.4. Histogram
 
 - The step is the first of 1 s, 5 s, 15 s, 1 min, 5 min, 15 min, 1 h, 3 h, 12 h, 1 day, 7 days, 30 days that gives
-  at most 80 bars. The start is aligned down to a step boundary.
+  at most 80 bars (`Histogram::forRange`); a range longer than 80 × 30 days gets a multiple of 30 days. The start is
+  aligned down to a multiple of the step, counted from 1970-01-01 UTC.
+- The bars cover the period of the search. "All time" and other open-ended periods end at the oldest or the newest
+  match; a bounded period without matches still gets its empty bars, so the time axis stays.
 - Bars are stacked by level using the `Theme` colors; the tooltip shows the interval and per-level counts.
 - Drag-select → the "Custom range" period from the selection bounds → a new search. Esc restores the previous period.
 
 ### 6.5. Statistics
 
 - The Statistics tab: "Group by: level / source / similar messages / field…".
-- Table: value, count, share (percent of matches). Levels and sources are shown by name, not by number.
-- Double-click: level → keep only that level; source → select that source; field → add `field:value` to the search line;
-  similar message → add the longest `#`-free part of the pattern, in quotes, to the search line.
+- Table: value, count, share (percent of matches). Levels and sources are shown by name, not by number
+  (`StatsRow::id` carries the level value or the source id).
+- Double-click: level → keep only that level; source → select that source; field → add `field:value` to the search line
+  (`-field:*` for the "(no field)" row); similar message → add the longest `#`-free part of the pattern, in quotes, to
+  the search line.
 
 ### 6.6. Live mode
 

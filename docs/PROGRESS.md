@@ -8,8 +8,8 @@ One stage per session, in order (see `docs/DESIGN.md` §9). Update this file at 
 | 1 | Skeleton | done | 2026-11-19 |
 | 2 | Storage | done | 2026-11-19 |
 | 3 | Intake | done | 2026-11-20 |
-| 4 | Search | **next** | |
-| 5 | Main window | — | |
+| 4 | Search | done | 2026-11-20 |
+| 5 | Main window | **next** | |
 | 6 | Analysis | — | |
 | 7 | Polish | — | |
 
@@ -321,3 +321,149 @@ no longer claims `msg_key`.
 - The tool that writes files turned `\uXXXX` escapes into characters again in this stage; after writing a test,
   check that it is ASCII:
   `python -c "import glob; print([f for f in glob.glob('tests/*') if any(b > 127 for b in open(f,'rb').read())])"`.
+
+### Stage 4 — Search (2026-11-20)
+
+**Built** (all in `src/core`; errors as `std::optional` / `bool` + `errorString()`, like stage 2)
+
+- `SearchQuery.h/.cpp` — the values of a search and the condition builder:
+  - `StatsMode`, `SearchRequest` (DESIGN 6.1; `levels` defaults to all seven, an empty list matches nothing; `from`
+    inclusive, `to` exclusive, 0 = unbounded), `SqlFragment{QString sql; QVariantList values}` (a condition over
+    `records r` and its values in placeholder order), `LevelCounts` (`std::array<qint64, kLevelCount>`, index = `Level`
+    value; `kLevelCount = 7` is in `Record.h`), `Histogram{start, step, bars}` with `static forRange(first, last)` (the
+    step table of DESIGN 6.4, times inclusive) and `total()`, `StatsRow{value, count, id, noField}`.
+  - `namespace SearchQuery`: `build(request)`; `isValidFieldName(name)` (`[A-Za-z0-9_.@-]+`); `fieldValue(name)` (the
+    value expression, binds the path `$."name"` twice); `fieldMention(name)` (`instr(r.fields, ?) > 0` with `"name"`);
+    `quote(text)` (a part that reads back exactly: quotes, `\"` and `\\`).
+- `LogStore` — `beginRead()` / `endRead()` (one read transaction), `findRecords(condition, limit)` (newest first;
+  replaces `latestRecords`, which is gone: `findRecords({}, n)` gives the newest n), `matchSpan(condition)` →
+  `MatchSpan{found, firstTs, lastTs}`, `histogram(condition, first, last)`, `statistics(condition, mode)` (level, source,
+  message; other modes give no rows), `fieldStatistics(condition, field, matchCount)`, `kStatsRowLimit = 100`.
+- `SearchService.h/.cpp` — `SearchResult{generation, rows, total, histogram, stats, elapsedMs, error}` and
+  `SearchService` (QObject, GUI thread only):
+  - `setDatabasePath(path)`, `databasePath()`, `quint64 search(request)` (generations grow from 1),
+    `waitForFinished()`, signal `finished(const SearchResult&)`; the destructor waits for running searches.
+  - Runs in its own `QThreadPool` of 2 threads. A job opens its own `Database` + `LogStore` in the pool thread and runs,
+    in one read transaction: span (`min`/`max`) → histogram (total = sum of the bars) → rows between the oldest and
+    the newest match → statistics, only when `statsMode != None`.
+  - A result is emitted only if no newer `search()` or `setDatabasePath()` came after its start; a stale job stops
+    between its queries. Errors arrive as results with `error` set and everything else empty: `No database is open.`,
+    `Cannot search C:\...: the file does not exist.` (a search never creates a file), `... is not a LogVault database.`,
+    `Cannot compute statistics: "a b" is not a valid field name.`, SQLite errors.
+  - `SearchResult`, `Histogram`, `StatsRow` are registered as meta types in the constructor.
+
+**Search line** (DESIGN 6.2) — what stages 5 and 6 build into it
+
+| Action | Part to add |
+|---|---|
+| Search for this value (details panel, statistics by field) | `name + ':' + SearchQuery::quote(value)` |
+| Exclude this value | `'-' + name + ':' + SearchQuery::quote(value)` |
+| Double-click on the "(no field)" row (`StatsRow::noField`) | `'-' + name + ":*"` |
+| Double-click on a similar message | `SearchQuery::quote(longest #-free part)` |
+
+Quoted text is literal (no field syntax, no `*` wildcard). Field names are case-sensitive; values are compared without
+case (Latin letters only, as SQLite does). JSON `true`/`false` match as words, JSON `null` counts as no field.
+
+**How to wire it** (stage 5)
+
+```cpp
+m_search = new SearchService(this);
+connect(m_search, &SearchService::finished, this, &MainWindow::showSearchResult);
+m_search->setDatabasePath(path);            // after opening a database; then start a search
+m_runningSearch = m_search->search(request); // keep the number for live mode
+
+void MainWindow::showSearchResult(const SearchResult& result) {
+    if (result.generation == m_runningSearch) m_runningSearch = 0;
+    if (!result.error.isEmpty()) { /* status bar or message box */ return; }
+    // result.rows -> table, result.histogram -> histogram, result.stats -> Statistics tab,
+    // "Found result.total of <all records> · result.elapsedMs ms"
+}
+```
+
+- Live mode (DESIGN 6.6, "never while the previous search is still running"): a search is running while
+  `m_runningSearch != 0`. After `setDatabasePath()` the old result never arrives, so reset the number there.
+- Relative periods: set both `from` and `to` (`to` = now + 1), so the bars span the whole period, also when it is empty.
+- `rows` are `Record`s with the source name, newest first; `maxRows` comes from the settings (default 10,000).
+
+**Tests** (three new classes; the whole suite: 387 passed, 1 skipped — the performance test)
+
+- `TestSearchQuery` (92 with data rows): every example of DESIGN 6.2, field forms, exclusions, quotes and escapes,
+  unbalanced quotes, empty input, LIKE escaping, Cyrillic, injection attempts in values and in field names, the level,
+  source and period filters, their combination, name validation, `quote()` round trips. Each case also checks that
+  the number of `?` equals the number of values.
+- `TestSearch` (85 + perf): a fixture of 17 known records — order with equal times, limits, the search line and the
+  filters on real data (period bounds, case, booleans, null, numbers vs strings, `%` and `_`), injection attempts
+  leave the database unchanged, a 3,000-word line gives no matches or a clean error, histogram bars, the step table (1 s … 60 days) and
+  5,000 random ranges, every statistics mode with limits and "(no field)", the `instr` hint never hiding a record, the
+  read snapshot while another connection writes.
+- `TestSearchService` (10): async result and growing generations, statistics only when asked, five searches in a row
+  deliver only the last, a database switch drops the old result, error results (no file is created), empty bars of an
+  empty bounded period, consistent results while another thread writes 20,000 records, destruction during a search.
+  `failOnWarning()` in `init()`.
+
+**Performance** — `LV_PERF=1` runs `TestSearch::searchesMillionRecordsQuickly` (about a minute; it writes a
+file of a few hundred MB in a temporary directory):
+
+```bash
+export PATH="/c/msys64/ucrt64/bin:$PATH"
+cmake --build --preset debug && LV_PERF=1 QT_QPA_PLATFORM=offscreen ./build/debug/lv_tests.exe | grep perf:
+```
+
+Debug build, 1,000,000 generated shop records, warm cache, two runs (the test passes if typical searches take ≤ 1 s
+and statistics over all records ≤ 1.5 s):
+
+| Search | Time | Matches |
+|---|---|---|
+| all records (default view) | 0.30 s | 1,000,000 |
+| word `timeout` | 0.54–0.70 s | 17,444 |
+| field `provider:bepaid` | 0.56–0.63 s | 92,528 |
+| levels ERROR+FATAL, last 24 hours | 0.08 s | 10,770 |
+| `timeout provider:bepaid -env:test` | 0.64–0.65 s | 13,610 |
+| statistics by similar messages, ERROR only | 0.22 s | 69,825 |
+| statistics by similar messages, all records | 0.98–1.02 s | 1,000,000 |
+| statistics by field `provider`, all records | 0.94–0.95 s | 1,000,000 |
+| writing the 1,000,000 records (batches of 10,000) | 12.5–14.5 s | |
+
+The first version (count, rows, histogram as in the old DESIGN 6.3) took 1.46 s for a field search and 1.58 s for
+field statistics; the query shape of DESIGN 6.3 fixed that. Statistics by message over all records stay at about 1 s:
+the sort of 1,000,000 `msg_key` values takes ~0.65 s. An index on `msg_key` brings that query to ~0.06 s (measured), but
+it changes the schema and needs `GROUP BY +r.msg_key` whenever the condition is not empty (else SQLite walks that
+index and takes 1.5 s for a text search) — not done; the author decides.
+
+**Checks done**
+
+- Clean rebuild of `build/debug`: no warnings; ctest 1/1 passed. Every commit of the branch builds and passes the tests
+  (`git rebase -x`). The performance test passes (numbers above).
+- `grep` over the diff: no values concatenated into SQL (all through `?`, the JSON path and the `instr` needle
+  included), no debug output besides the `qInfo("perf: ...")` lines of the opt-in test, sources ASCII.
+
+**ASSUMPTIONs**
+
+- Search line: inside quotes `\"` and `\\` stand for `"` and `\`; quoted text is literal; an unclosed quote runs to the
+  end. `name:` alone, a lone `-` and a part with an invalid name are text; only one leading `-` excludes; `*` is a
+  wildcard in unquoted field values only; field names are case-sensitive (JSON keys are).
+- JSON `true`/`false` compare and group as the words `true`/`false` (SQLite's `json_extract` gives 1/0); JSON `null`
+  counts as no field.
+- Field statistics keep exact values as groups (`BePaid` and `bepaid` are two groups), although the search ignores case.
+- Histogram bars are aligned to multiples of the step since 1970-01-01 UTC (UTC midnight for days, Thursday for weeks);
+  a range over 80 × 30 days gets a multiple of 30 days. A bounded period without matches gets empty bars; an unbounded
+  one gets none.
+- `SearchRequest` enables all levels by default. A search of a missing file is an error (no file is created).
+  `setDatabasePath()` drops results of earlier searches. `elapsedMs` counts from `search()` to the end of the job.
+- The `instr` hint relies on `fields` being written by LogVault (`QJsonDocument`, compact): a record with a field always
+  contains `"name"`. A database edited by hand with escaped key characters would hide such records from field searches.
+
+**DESIGN changes** — 3.3 (the search pool, stale searches stop, shutdown waits for it), 6.1 (`Histogram`, `StatsRow`,
+`SqlFragment`, request defaults, failed and dropped results), 6.2 (quotes, escapes, the value expression, the `instr`
+hint, the UI filters), 6.3 (new query shape and why), 6.4 (alignment, long ranges, empty periods), 6.5
+(`StatsRow::id`, double-click on "(no field)").
+
+**For the next stages**
+
+- Stage 5: the wiring above. The GUI thread needs its own `Database` + `LogStore` for small reads (`sources()`, the
+  total record count for the status bar) — never share the search or intake connections.
+- Stage 6: `HistogramWidget` draws `bars[i][level]`; bar i covers `[start + i*step, start + (i+1)*step)`, so a drag
+  over bars a..b gives the period `[start + a*step, start + (b+1)*step)`. `StatsView` shows `value`, `count` and
+  `count / total`; `id` and `noField` drive the double-click. The `Exporter` must stream all matches, not `maxRows`:
+  add a streaming read to `LogStore` (for example, chunks ordered by `r.ts DESC, r.id DESC`) that takes the same
+  `SqlFragment`.

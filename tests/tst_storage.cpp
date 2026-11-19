@@ -254,7 +254,7 @@ void TestStorage::reopenKeepsRecords() {
     const std::optional<qint64> count = store.recordCount();
     QVERIFY2(count, qPrintable(store.errorString()));
     QCOMPARE(*count, 10);
-    const std::optional<QVector<Record>> latest = store.latestRecords(1);
+    const std::optional<QVector<Record>> latest = store.findRecords({}, 1);
     QVERIFY2(latest, qPrintable(store.errorString()));
     QCOMPARE(latest->size(), 1);
     QCOMPARE(latest->first().ts, 1009);
@@ -331,7 +331,7 @@ void TestStorage::storesEmptyTextsAndSkipsEmptyBatch() {
     // A default Record has null strings; they must be stored as empty texts, not rejected as NULL.
     QVERIFY2(store.insertBatch({Record()}), qPrintable(store.errorString()));
 
-    const std::optional<QVector<Record>> latest = store.latestRecords(10);
+    const std::optional<QVector<Record>> latest = store.findRecords({}, 10);
     QVERIFY2(latest, qPrintable(store.errorString()));
     QCOMPARE(latest->size(), 1);
     QCOMPARE(latest->first().level, Level::Unknown);
@@ -488,7 +488,7 @@ void TestStorage::deleteOlderThanIsStrict() {
 
     // All sources.
     QCOMPARE(store.deleteRecordsOlderThan(1000).value_or(-1), 1);
-    const QVector<Record> left = store.latestRecords(10).value();
+    const QVector<Record> left = store.findRecords({}, 10).value();
     QCOMPARE(left.size(), 4);
     for (const Record& record : left) {
         QVERIFY(record.ts >= 1000);
@@ -514,7 +514,7 @@ void TestStorage::unicodeRoundTrip() {
     record.raw = QStringLiteral(u"raw: ") + record.message;
     QVERIFY2(store.insertBatch({record}), qPrintable(store.errorString()));
 
-    const std::optional<QVector<Record>> latest = store.latestRecords(1);
+    const std::optional<QVector<Record>> latest = store.findRecords({}, 1);
     QVERIFY2(latest, qPrintable(store.errorString()));
     QCOMPARE(latest->size(), 1);
     const Record& stored = latest->first();

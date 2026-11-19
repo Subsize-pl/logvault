@@ -6,6 +6,9 @@
 /// Severity of a record. The numeric values are stored in the database, so they must never change.
 enum class Level : int { Unknown = 0, Trace, Debug, Info, Warn, Error, Fatal };
 
+/// Number of levels, Level::Unknown to Level::Fatal.
+inline constexpr int kLevelCount = 7;
+
 /// One log record: the unit that is received, stored, searched and shown.
 struct Record {
     qint64 id = 0;
