@@ -5,6 +5,8 @@ qt_add_executable(lv_tests
     tst_environment.h
     tst_storage.cpp
     tst_storage.h
+    tst_timeparser.cpp
+    tst_timeparser.h
 )
 
 target_link_libraries(lv_tests PRIVATE lv_core Qt6::Test)

@@ -1,5 +1,6 @@
 #include "tst_environment.h"
 #include "tst_storage.h"
+#include "tst_timeparser.h"
 
 #include <QCoreApplication>
 #include <QTest>
@@ -25,5 +26,6 @@ int main(int argc, char* argv[]) {
     int failed = 0;
     failed += runTests<TestEnvironment>(argc, argv);
     failed += runTests<TestStorage>(argc, argv);
+    failed += runTests<TestTimeParser>(argc, argv);
     return failed == 0 ? 0 : 1;
 }

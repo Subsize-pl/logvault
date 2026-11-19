@@ -7,6 +7,8 @@ qt_add_library(lv_core STATIC
     LogStore.h
     Record.cpp
     Record.h
+    TimeParser.cpp
+    TimeParser.h
 )
 
 target_include_directories(lv_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
