@@ -17,15 +17,15 @@ public:
     static constexpr int kSchemaVersion = 1;
 
     Database() = default;
-    /// Closes the connection. Call in the thread that opened it, after every LogStore and query on it is gone.
+    /// Closes the connection. Call it in the opening thread, after every LogStore and query on it is gone.
     ~Database();
 
     Database(const Database&) = delete;
     Database& operator=(const Database&) = delete;
 
-    /// Opens the database file for the calling thread, creating it and the schema if the file is new or empty.
-    /// A file of another program or of a newer LogVault is rejected without being modified.
-    /// Returns false and sets errorString() on failure. Can succeed only once per object.
+    /// Opens the database file for the calling thread, creating it and the schema if the file is new or
+    /// empty. A file of another program or of a newer LogVault is rejected without being modified. Returns
+    /// false and sets errorString() on failure. Can succeed only once per object.
     bool open(const QString& path);
 
     bool isOpen() const;

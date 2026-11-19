@@ -17,7 +17,7 @@ constexpr const char* kConnectionPragmas[] = {
     "PRAGMA synchronous = NORMAL",
 };
 
-// DESIGN.md §4.2. Every statement is idempotent, so two connections creating one new file cannot conflict.
+// The schema of DESIGN.md section 4.2. Every statement is idempotent: two connections may create it at once.
 constexpr const char* kSchemaStatements[] = {
     R"(CREATE TABLE IF NOT EXISTS meta (
            key   TEXT PRIMARY KEY,
@@ -148,7 +148,7 @@ Database::SchemaState Database::inspectSchema() {
         return SchemaState::Invalid;
     }
     if (version > kSchemaVersion) {
-        fail(tr("%1 was created by a newer version of LogVault (schema version %2, this version supports %3).")
+        fail(tr("%1 was created by a newer version of LogVault (schema version %2; this version reads %3).")
                  .arg(nativePath)
                  .arg(version)
                  .arg(kSchemaVersion));
@@ -193,7 +193,8 @@ bool Database::enableWal() {
     // SQLite keeps the old mode without an error where WAL is impossible, so the answer must be checked.
     const QString mode = query.value(0).toString();
     if (mode.compare(QLatin1StringView("wal"), Qt::CaseInsensitive) != 0) {
-        return fail(tr("Cannot switch %1 to WAL mode (the journal mode stays \"%2\").").arg(nativePath, mode));
+        return fail(
+            tr("Cannot switch %1 to WAL mode (the journal mode stays \"%2\").").arg(nativePath, mode));
     }
     return true;
 }
@@ -243,7 +244,7 @@ bool Database::fail(const QString& message) {
 
 bool Database::failRead(const QSqlError& error) {
     const QString nativePath = QDir::toNativeSeparators(m_db.databaseName());
-    // SQLite opens any file lazily; a file that is not SQLite at all fails on the first statement that reads it.
+    // SQLite opens files lazily, so a file that is not SQLite at all fails on the first read.
     if (error.nativeErrorCode() == kNotADatabaseCode) {
         return fail(tr("%1 is not a LogVault database.").arg(nativePath));
     }
@@ -256,7 +257,7 @@ void Database::closeConnection() {
     }
     Q_ASSERT(QThread::currentThread() == m_thread);
     m_db.close();
-    // removeDatabase() complains and breaks the connection if a handle to it still exists, so drop ours first.
+    // removeDatabase() complains if a handle to the connection still exists, so drop ours first.
     m_db = QSqlDatabase();
     QSqlDatabase::removeDatabase(m_connectionName);
     m_connectionName.clear();
