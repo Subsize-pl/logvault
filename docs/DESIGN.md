@@ -193,7 +193,8 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 |---|---|---|
 | `Record`, `Level` | core | A log record and the level scale (§4.1). |
 | `TimeParser` | core | Parses a timestamp from text or a number (§5.4). |
-| `LineParser` | core | Line → `Record`: JSON or plain text, fields, `msg_key`. Stateless. |
+| `LineParser` | core | Line → `Record`: JSON or plain text, fields. Stateless (`LogStore` computes `msg_key`). |
+| `LineSplitter` | core | Splits a byte stream into lines: line breaks, blank lines, the 64 KB limit. Shared by `TcpServer` and `FileImporter`. |
 | `Database` | core | Opens a connection in the current thread, applies SQLite settings, creates the schema. |
 | `LogStore` | core | All SQL: batch insert, sources, search, histogram, statistics, deletion. The only place with SQL. |
 | `SearchQuery` | core | Filters + search line → `WHERE` clause and bound values (§6). |
@@ -338,7 +339,7 @@ PRAGMA busy_timeout = 5000;     -- wait up to 5 s if another writer holds the lo
 - A client connects to `127.0.0.1:5170` (the port is configurable) and sends UTF-8 lines, each ending with `\n`;
   a `\r` before it is dropped. One line = one record. The server sends nothing back.
 - A line is a JSON object or plain text (§5.4).
-- Lines longer than 64 KB are truncated (the record gets the field `_truncated: true`).
+- Lines longer than 64 KB are truncated (the record gets the field `_truncated: true`). Blank lines are skipped.
 - A connection may stay open for a long time (a logger keeps it open) or be opened for each batch of lines.
 - Address: "this computer only" (`127.0.0.1`, default) or "whole network" (`0.0.0.0`, needs a firewall permission).
 
@@ -353,22 +354,27 @@ $w.WriteLine('{"level":"error","service":"test","msg":"Hello from PowerShell"}')
 
 - `QTcpServer::listen(address, port)`; a failure (port busy, no permission) → `errorOccurred(message)` signal and the
   "error" state.
-- New connection → its own buffer (`QByteArray`) and line counter; `clientConnected(id, address)` signal.
+- New connection → its own buffer (a `LineSplitter` holding a `QByteArray`) and line counter.
   Above 50 connections a new one is closed immediately.
-- `readyRead` → append the bytes to the buffer → cut out all complete lines → pass them to `Ingestor` with the default
-  source. If the buffer reaches 64 KB without `\n`, it is passed on as a truncated line.
-- Disconnect → the rest of the buffer (if not empty) becomes the last line → `clientDisconnected(id)` → `deleteLater()`.
-- Once per second → `statsChanged(connections, lines per second, total lines)` for the Receiver panel.
+- `readyRead` → append the bytes to the buffer → cut out all complete lines → pass them to `Ingestor`
+  (`linesReceived` signal) with the default source. If the buffer reaches 64 KB without `\n`, it is passed on as a
+  truncated line and the rest of that line is skipped.
+- Disconnect → the rest of the buffer (if not empty) becomes the last line → `deleteLater()`.
+- Once per second, and on every start and stop → `statsChanged(ReceiverStats)` for the Receiver panel: state
+  (listening, address, port, error), connections (id, address, connected at, lines), lines per second, total lines.
 - Stop: close the listening socket and all connections, pass the buffer leftovers to `Ingestor`.
 
 ### 5.3. File import (`FileImporter`, thread pool)
 
 - Files are chosen in a `QFileDialog` (several allowed) or dropped onto the window. The source for each file is the
   file name without extension; a small dialog before the import lets the user change it or pick an existing source.
-- Reading line by line (`QFile` + `readLine`); a UTF-8 BOM at the start is skipped.
-- A line starting with a space or a tab is appended to the previous record (this joins stack traces).
+- Reading in blocks (`QFile::read`) split into lines by `LineSplitter`, with the same rules as TCP (line breaks,
+  blank lines, the 64 KB limit); a UTF-8 BOM at the start is skipped, a UTF-16 file is rejected with a clear message.
+- A line starting with a space or a tab is appended to the previous record (this joins stack traces); a joined record
+  is limited to 64 KB like a line and flagged `_truncated` beyond that.
 - Writing in transactions of 1,000 records. Progress (percent of bytes) is signaled at most 10 times per second.
 - Cancel sets a flag; already committed transactions stay in the database, and the summary says so.
+- A file that cannot be opened or read stops the import with an error; the lines read before it are still written.
 - Summary: "Added N records, M lines not parsed, took T" (unparsed lines are still stored, see §5.4).
 
 ### 5.4. Line parsing (`LineParser`)
@@ -527,7 +533,7 @@ logvault/
 ├── CMakePresets.json
 ├── src/
 │   ├── core/       Record, TimeParser, LineParser, Database, LogStore, SearchQuery, SearchService,
-│   │               Ingestor, TcpServer, FileImporter, Exporter
+│   │               LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
 │                   HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView, SettingsDialog,
 │                   Theme, resources.qrc (application icon)
@@ -546,7 +552,7 @@ logvault/
 | Data and parsing | `Record`, `TimeParser`, `LineParser` | 450 |
 | Database | `Database`, `LogStore` | 570 |
 | Search | `SearchQuery`, `SearchService` | 360 |
-| Intake, import, export | `Ingestor`, `TcpServer`, `FileImporter`, `Exporter` | 680 |
+| Intake, import, export | `LineSplitter`, `Ingestor`, `TcpServer`, `FileImporter`, `Exporter` | 680 |
 | Main window | `main.cpp`, `MainWindow` | 600 |
 | Panels | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `RecordDetailsPanel`, `StatsView` | 910 |
 | Table and histogram | `RecordTableModel`, `HistogramWidget` | 410 |

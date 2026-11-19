@@ -3,10 +3,22 @@ qt_add_library(lv_core STATIC
     AppInfo.h
     Database.cpp
     Database.h
+    FileImporter.cpp
+    FileImporter.h
+    Ingestor.cpp
+    Ingestor.h
+    LineParser.cpp
+    LineParser.h
+    LineSplitter.cpp
+    LineSplitter.h
     LogStore.cpp
     LogStore.h
     Record.cpp
     Record.h
+    TcpServer.cpp
+    TcpServer.h
+    TimeParser.cpp
+    TimeParser.h
 )
 
 target_include_directories(lv_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

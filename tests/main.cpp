@@ -1,5 +1,11 @@
 #include "tst_environment.h"
+#include "tst_fileimporter.h"
+#include "tst_intake.h"
+#include "tst_lineparser.h"
+#include "tst_linesplitter.h"
+#include "tst_pythonclient.h"
 #include "tst_storage.h"
+#include "tst_timeparser.h"
 
 #include <QCoreApplication>
 #include <QTest>
@@ -25,5 +31,11 @@ int main(int argc, char* argv[]) {
     int failed = 0;
     failed += runTests<TestEnvironment>(argc, argv);
     failed += runTests<TestStorage>(argc, argv);
+    failed += runTests<TestTimeParser>(argc, argv);
+    failed += runTests<TestLineParser>(argc, argv);
+    failed += runTests<TestLineSplitter>(argc, argv);
+    failed += runTests<TestIntake>(argc, argv);
+    failed += runTests<TestFileImporter>(argc, argv);
+    failed += runTests<TestPythonClient>(argc, argv);
     return failed == 0 ? 0 : 1;
 }
