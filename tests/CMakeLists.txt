@@ -1,4 +1,5 @@
 qt_add_executable(lv_tests
+    ConnectionGuard.h
     main.cpp
     tst_environment.cpp
     tst_environment.h

@@ -1,31 +1,16 @@
 #include "tst_environment.h"
 
+#include "ConnectionGuard.h"
+
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTest>
 
-#include <utility>
-
 namespace {
 
 constexpr QLatin1StringView kSqliteDriver("QSQLITE");
-
-/// Removes a database connection at the end of the scope, even when a failed check returns early.
-/// Create it before the connection's QSqlDatabase and QSqlQuery handles: those must be destroyed first,
-/// or Qt reports the connection as still in use.
-class ConnectionGuard {
-public:
-    explicit ConnectionGuard(QString name) : m_name(std::move(name)) {}
-    ~ConnectionGuard() { QSqlDatabase::removeDatabase(m_name); }
-
-    ConnectionGuard(const ConnectionGuard&) = delete;
-    ConnectionGuard& operator=(const ConnectionGuard&) = delete;
-
-private:
-    QString m_name;
-};
 
 } // namespace
 
