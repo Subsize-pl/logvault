@@ -1,6 +1,8 @@
 qt_add_library(lv_core STATIC
     AppInfo.cpp
     AppInfo.h
+    Database.cpp
+    Database.h
     Record.cpp
     Record.h
 )

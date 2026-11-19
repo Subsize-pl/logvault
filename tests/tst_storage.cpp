@@ -1,8 +1,49 @@
 #include "tst_storage.h"
 
+#include "ConnectionGuard.h"
+#include "Database.h"
 #include "Record.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QTest>
+
+#include <type_traits>
+
+static_assert(!std::is_copy_constructible_v<Database> && !std::is_copy_assignable_v<Database>,
+              "a Database owns its connection and must not be copied");
+
+namespace {
+
+// Reads the journal mode of a file through a separate plain connection.
+QString journalModeOf(const QString& path) {
+    const QString connection = QStringLiteral("tst_storage_journal");
+    const ConnectionGuard guard(connection);
+    QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
+    db.setDatabaseName(path);
+    if (!db.open()) {
+        return db.lastError().text();
+    }
+    QSqlQuery query(db);
+    if (!query.exec(QStringLiteral("PRAGMA journal_mode")) || !query.next()) {
+        return query.lastError().text();
+    }
+    return query.value(0).toString();
+}
+
+} // namespace
+
+void TestStorage::init() {
+    m_dir = std::make_unique<QTemporaryDir>();
+    QVERIFY2(m_dir->isValid(), qPrintable(m_dir->errorString()));
+}
+
+void TestStorage::cleanup() { m_dir.reset(); }
+
+QString TestStorage::databasePath(const QString& fileName) const { return m_dir->filePath(fileName); }
 
 void TestStorage::levelNamesAndValues() {
     QCOMPARE(levelName(Level::Unknown), QStringLiteral("UNKNOWN"));
@@ -53,4 +94,105 @@ void TestStorage::messageKeyKeepsSurrogatePairsWhole() {
     // When the pair fits completely, it is kept.
     const QString fits = QString(198, u'x') + emoji + QStringLiteral("tail");
     QCOMPARE(messageKey(fits), QString(198, u'x') + emoji);
+}
+
+void TestStorage::createsSchemaAndReopens() {
+    const QString path = databasePath();
+    {
+        Database db;
+        QVERIFY2(db.open(path), qPrintable(db.errorString()));
+        QVERIFY(db.isOpen());
+        QCOMPARE(db.path(), path);
+        QVERIFY(!db.open(path)); // one object, one connection
+    }
+    QVERIFY(QFileInfo::exists(path));
+
+    Database db;
+    QVERIFY2(db.open(path), qPrintable(db.errorString()));
+    QSqlQuery query(db.connection());
+    QVERIFY(query.exec(QStringLiteral("SELECT value FROM meta WHERE key = 'schema_version'")));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toString(), QString::number(Database::kSchemaVersion));
+    QVERIFY(query.exec(QStringLiteral("PRAGMA journal_mode")));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toString(), QStringLiteral("wal"));
+    QVERIFY(query.exec(QStringLiteral("PRAGMA foreign_keys")));
+    QVERIFY(query.next());
+    QCOMPARE(query.value(0).toInt(), 1);
+}
+
+void TestStorage::rejectsNewerSchemaVersion() {
+    const QString path = databasePath();
+    {
+        Database db;
+        QVERIFY2(db.open(path), qPrintable(db.errorString()));
+        QSqlQuery query(db.connection());
+        QVERIFY(query.exec(QStringLiteral("UPDATE meta SET value = '2' WHERE key = 'schema_version'")));
+    }
+
+    Database db;
+    QVERIFY(!db.open(path));
+    QVERIFY(!db.isOpen());
+    QVERIFY2(db.errorString().contains(QStringLiteral("newer version")), qPrintable(db.errorString()));
+}
+
+void TestStorage::rejectsForeignSqliteFile() {
+    const QString path = databasePath(QStringLiteral("foreign.db"));
+    {
+        const QString connection = QStringLiteral("tst_storage_foreign");
+        const ConnectionGuard guard(connection);
+        QSqlDatabase db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
+        db.setDatabaseName(path);
+        QVERIFY2(db.open(), qPrintable(db.lastError().text()));
+        QSqlQuery query(db);
+        QVERIFY(query.exec(QStringLiteral("CREATE TABLE notes (text TEXT)")));
+    }
+
+    Database db;
+    QVERIFY(!db.open(path));
+    QVERIFY2(db.errorString().contains(QStringLiteral("not a LogVault database")), qPrintable(db.errorString()));
+    // The foreign file must stay untouched, including its journal mode.
+    QCOMPARE(journalModeOf(path), QStringLiteral("delete"));
+}
+
+void TestStorage::rejectsNonSqliteFile() {
+    const QString path = databasePath(QStringLiteral("notes.txt"));
+    const QByteArray content = QByteArray("This is a plain text file, not a database.\n").repeated(40);
+    {
+        QFile file(path);
+        QVERIFY2(file.open(QIODevice::WriteOnly), qPrintable(file.errorString()));
+        QCOMPARE(file.write(content), content.size());
+    }
+
+    Database db;
+    QVERIFY(!db.open(path));
+    QVERIFY2(db.errorString().contains(QStringLiteral("not a LogVault database")), qPrintable(db.errorString()));
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), content);
+}
+
+void TestStorage::rejectsMissingDirectory() {
+    Database db;
+    QVERIFY(!db.open(databasePath(QStringLiteral("missing/sub/test.lvdb"))));
+    QVERIFY(!db.errorString().isEmpty());
+    QVERIFY(!db.open(QString()));
+    QVERIFY(!db.errorString().isEmpty());
+}
+
+void TestStorage::opensPathWithSpacesAndNonAscii() {
+    // "test dir" and "journal.lvdb" in Russian, written with escapes to keep the source ASCII.
+    const QString dirName = QStringLiteral(u"тест dir");
+    QVERIFY(QDir(m_dir->path()).mkdir(dirName));
+    const QString path =
+        QDir(m_dir->filePath(dirName)).filePath(QStringLiteral(u"журнал.lvdb"));
+    {
+        Database db;
+        QVERIFY2(db.open(path), qPrintable(db.errorString()));
+    }
+    QVERIFY(QFileInfo::exists(path));
+
+    Database db;
+    QVERIFY2(db.open(path), qPrintable(db.errorString()));
 }
