@@ -22,6 +22,8 @@ qt_add_library(lv_gui STATIC
     RecordDetailsPanel.h
     RecordTableModel.cpp
     RecordTableModel.h
+    Settings.cpp
+    Settings.h
     SourcesPanel.cpp
     SourcesPanel.h
     StatsView.cpp
