@@ -10,8 +10,8 @@ One stage per session, in order (see `docs/DESIGN.md` §9). Update this file at 
 | 3 | Intake | done | 2026-11-20 |
 | 4 | Search | done | 2026-11-20 |
 | 5 | Main window | done | 2026-11-20 |
-| 6 | Analysis | **next** | |
-| 7 | Polish | — | |
+| 6 | Analysis | done | 2026-11-20 |
+| 7 | Polish | **next** | |
 
 ## Environment
 
@@ -617,3 +617,101 @@ without a screen):
   needs a status bar indicator like the import one.
 - Stage 7: the constants at the top of `MainWindow.cpp` become settings; docks and the toolbar need object names for
   `saveState()`; the recent list goes on the placeholder (`createPlaceholder()`).
+
+### Stage 6 — Analysis (2026-11-20)
+
+**Built**
+
+- Core:
+  - `LogStore::visitRecords(condition, visit)` — every match, newest first, one row at a time (forward-only query);
+    `countRecords(condition)`; the chunked deletions take an optional `DeleteProgress(deleted, total)` callback (they
+    count first, then report before the first chunk and after each one).
+  - `DatabaseJobs::deleteRecordsOlderThan(path, before, sourceId)` — kind `DeleteOldRecords`, same cancel flag;
+    signal `progressChanged(int percent)` (pool thread) for both deletions.
+  - `Exporter` (QObject, GUI thread; the job in `QThreadPool::globalInstance()` with its own connection):
+    `start(dbPath, request, path, ExportFormat::Csv|JsonLines, separator)`, `cancel()`, `isRunning()`,
+    `waitForFinished()`, static `listSeparator()` (`HKCU\Control Panel\International\sList`, `,` fallback); signals
+    `progressChanged(percent)` (pool thread, at most every 100 ms) and `finished(ExportSummary{path, exported,
+    elapsedMs, cancelled, error})`. Count and rows in one read transaction; written through `QSaveFile`.
+- GUI:
+  - `HistogramWidget` (QPainter) — stacked bars (FATAL at the bottom), scale label, round-time axis labels, hover,
+    rich-text tooltip, drag-select of whole bars → `FilterBar::zoomToPeriod()`; Esc → `FilterBar::restorePreviousPeriod()`
+    (a stack of up to 50 periods; choosing a period in the combo clears it). `setCustomPeriod()` is gone.
+  - `StatsView` — Group by Level / Source / Similar messages / Field… (+ field name, Enter applies), Value / Count /
+    Share table, summary label; double-click or Enter per DESIGN 6.5 (`SourcesPanel::showOnlySourceId()` is new).
+    `MainWindow::search()` asks for statistics only while the tab is current; switching to it searches.
+  - File → Export Results… (Ctrl+E, toolbar), Data → Delete Records Older Than… (`DeleteRecordsDialog` + confirmation).
+  - `TaskStatus` — one status bar widget per background task (job, import, export): text, progress, Cancel. The stage 5
+    labels/buttons were replaced by it.
+  - Appearance fixes the author asked for after checking stage 5 in the dark Windows theme: the histogram starts at
+    120 px (`QSplitter::setSizes`; before, the splitter gave the placeholder 480 px); `Theme::neutralPalette()` (slate
+    `Highlight`/`AlternateBase` instead of the purple accent, gray placeholder text — the dark palette made it white),
+    applied in `main.cpp` and again on `colorSchemeChanged`; level colors as text go through
+    `Theme::levelTextColor()` (contrast ≥ 4.5:1, same hue) in the table, record details (now bold), statistics and level
+    buttons; `Theme::glyphIcon()` draws Import, Export, Start, Stop and Live (Live had no icon) in palette colors.
+    Real dark palette read on this machine: Base `#2d2d2d`, AlternateBase was `#400e59`, Highlight `#a94dc1`.
+
+**Decision (author, 2026-11-20):** no index on `msg_key` (see the stage 4 timings); statistics by message over all of
+1,000,000 records stay at about 1 s.
+
+**Tests** (the whole suite: 472 passed, 1 skipped — the performance test)
+
+- New classes: `TestExporter` (7: CSV quoting of commas, quotes, CR/LF, the BOM, the separator parameter, JSON Lines
+  that parse back with Unicode and control characters, every match in order past the block size, cancel leaves no file
+  and keeps an old one, errors create no files, the list separator), `TestTheme` (4: contrast on light and dark
+  backgrounds, the neutral palette, glyph icons), `TestHistogram` (8 + data rows: selection → period, label interval
+  and boundaries, label text, tooltip, drag, click and Esc).
+- New functions: `TestSearch::visitsEveryMatchNewestFirst`, `countsMatches`; `TestStorage::deletionReportsProgress`;
+  `TestDatabaseJobs::deletesOldRecordsWithProgress`, `cancelKeepsOldRecordsNotReached`;
+  `TestFilterBar::zoomsBackThroughEarlierPeriods`, `choosingAPeriodForgetsZooms`.
+- By the author's choice (time), `StatsView`, `TaskStatus`, `DeleteRecordsDialog` and the export/deletion wiring got no
+  unit tests; the scripted run below covers them.
+
+**Checks done**
+
+- Clean rebuild of `build/debug`: no warnings; ctest passed. The `release` preset builds without warnings. Every commit
+  of the branch builds without warnings and passes the tests (checked out one by one; `git rebase -x` failed to
+  reconfigure CMake inside git's environment here).
+- Smoke run: `LogVault.exe` alive after 4 s with the title "LogVault", nothing on stderr, closed by `WM_CLOSE`.
+- A scripted run of the real `MainWindow` (offscreen, the dark Windows palette emulated; throwaway program in the session
+  scratchpad): 3,050 records → table, 41 bars; histogram 120 px, table 512 px; statistics by level (4 groups), by
+  message, by field `provider` ("4 groups of 3,050 matches", "(no field)" row); double-click → `provider:"bepaid"`;
+  zoom → custom period, Esc → "All time"; export CSV and JSON Lines (1,199 records each, separator `;` from the
+  registry); Delete Records Older Than through both dialogs → "Deleted 50 old records." The only Qt messages were
+  "This plugin does not support propagateSizeHints()" from the offscreen platform. Screenshots checked: level colors and
+  icons readable on the dark palette. Nothing checked on a real screen.
+
+**ASSUMPTIONs**
+
+- Export order is newest first, like the table. CSV header `Time,Level,Source,Message,Fields`, times local as in the
+  table (`yyyy-MM-dd HH:mm:ss.zzz`), CRLF; JSON Lines times in UTC (`…Z`, importable back), keys in the order time,
+  level, source, message, fields; fields that are not a JSON object stay a string.
+- The export target cannot be the open database; the extension decides the format (`.jsonl`/`.json` → JSON Lines).
+- Histogram: a click selects nothing; the selection snaps to whole bars; day bars are labeled at UTC midnight.
+- The deletion dialog suggests the start of the day 30 days ago; emptied sources stay.
+- Statistics: a field grouping without a valid name asks for no statistics (the search never fails because of it).
+
+**Manual checklist for the author** — not run by the author yet. Demo steps 2–7 of DESIGN 11.1:
+
+1. Build, start LogVault, create `demo.lvdb`, Receiver → Start, Live on.
+2. `python examples/python_client.py --demo`: a connection in the Receiver panel, records flow in, the histogram grows;
+   after 20 s a red spike at the bottom of the bars.
+3. Drag across the spike: the period becomes a custom range and the bars narrow; Esc in the histogram goes back.
+4. Ctrl+click ERROR; Statistics → Similar messages: `Payment provider timeout after # ms` is almost all of them;
+   double-click it → its text in the search line.
+5. Double-click `provider` in Record Details → `provider:"bepaid"`; Statistics → Field… `provider` + Enter.
+6. Import an old log file (`python examples/python_client.py --demo --file shop.log`, File → Import Files…): progress in
+   the status bar, a new source.
+7. File → Export Results… (Ctrl+E) → CSV, open it in Excel: columns split, Cyrillic intact. Also try
+   Data → Delete Records Older Than… and the dark theme look (selection, alternate rows, icons).
+
+**Known rough edges (for stage 7)**
+
+- CSV cells that start with `=`, `+`, `-` or `@` are read by Excel as formulas (no escaping, per RFC 4180) — decide
+  whether to prefix them.
+- `Theme::neutralPalette()` and the level button style sheets are computed at start (the palette again on a Windows
+  theme switch, the buttons not); the stage 7 theme setting should rebuild both.
+- Statistics rows are taller than the records rows (default row height); the stats table could reuse the records
+  table's row height.
+- `MainWindow.cpp` is about 1,050 lines; settings and the recent list will add more — consider moving the export and
+  deletion handlers out if it grows further.
