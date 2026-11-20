@@ -19,6 +19,8 @@ qt_add_executable(lv_tests
     tst_liveupdater.h
     tst_linesplitter.cpp
     tst_linesplitter.h
+    tst_panels.cpp
+    tst_panels.h
     tst_pythonclient.cpp
     tst_pythonclient.h
     tst_recordtablemodel.cpp

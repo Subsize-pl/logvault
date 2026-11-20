@@ -4,14 +4,22 @@ qt_add_library(lv_gui STATIC
     FilterBar.h
     Format.cpp
     Format.h
+    ImportDialog.cpp
+    ImportDialog.h
     LiveUpdater.cpp
     LiveUpdater.h
     MainWindow.cpp
     MainWindow.h
     PeriodDialog.cpp
     PeriodDialog.h
+    ReceiverPanel.cpp
+    ReceiverPanel.h
+    RecordDetailsPanel.cpp
+    RecordDetailsPanel.h
     RecordTableModel.cpp
     RecordTableModel.h
+    SourcesPanel.cpp
+    SourcesPanel.h
     Theme.cpp
     Theme.h
 )
