@@ -11,7 +11,10 @@ One stage per session, in order (see `docs/DESIGN.md` §9). Update this file at 
 | 4 | Search | done | 2026-11-20 |
 | 5 | Main window | done | 2026-11-20 |
 | 6 | Analysis | done | 2026-11-20 |
-| 7 | Polish | **next** | |
+| 7 | Polish | done | 2026-11-20 |
+
+All stages are done (version 1.0.0). How to run the demo: the stage 7 notes below; the build and the Python client:
+`README.md`.
 
 ## Environment
 
@@ -715,3 +718,148 @@ without a screen):
   table's row height.
 - `MainWindow.cpp` is about 1,050 lines; settings and the recent list will add more — consider moving the export and
   deletion handlers out if it grows further.
+
+### Stage 7 — Polish (2026-11-20)
+
+All stages are done; the application is version 1.0.0.
+
+**Built**
+
+- `Settings` (`src/gui/Settings.h/.cpp`) — the F16 values (`port`, `wholeNetwork`, `autostartReceiver`,
+  `defaultSource`, `timeZone` Local/Utc, `theme` System/Light/Dark, `maxRows` 100–100,000) with `load(QSettings)` /
+  `save()`; a missing, damaged or out-of-range value reads as its default. `RecentDatabases` — up to 5 paths, newest
+  first, compared without case. Stored in `%APPDATA%\LogVault\LogVault.ini` (`QSettings::IniFormat`, set in
+  `main.cpp`); `MainWindow(QSettings&)` gets the store from `main()`.
+- `SettingsDialog` — View → Settings… and Receiver → Receiver Settings… (focus on the port); Restore Defaults.
+  `MainWindow::applySettings()` applies a change at once: theme, time zone, a running receiver moves to a new
+  address/port (`startReceiver()`; clients reconnect), a new default source goes to the server without a restart,
+  a new row limit searches again. View → Theme ▸ System/Light/Dark does the same for the theme.
+- Theme: `QStyleHints::setColorScheme()` (Qt 6.8; the requirement in `CMakeLists.txt` went from 6.5 to 6.8) asks
+  Windows for the light or dark palette, so the title bar follows; `main.cpp` reapplies `Theme::neutralPalette()` on
+  `colorSchemeChanged`. `FilterBar` (level button style sheets), `StatsView` (level colors, "(no field)" gray) and
+  `RecordDetailsPanel` (level color) rebuild their colors on `QEvent::PaletteChange`.
+- Display time zone everywhere: `Format::timestamp/dateTime(msecs, zone)`, `Format::timeZoneName()`; `setTimeZone()`
+  on `RecordTableModel` (header "Time (UTC)" in UTC), `RecordDetailsPanel`, `HistogramWidget` (labels and tooltips;
+  the static helpers take the zone), `FilterBar` (custom period text, also the ones Esc brings back — the zoom
+  history keeps times now, not texts), `ReceiverPanel`; `PeriodDialog` and `DeleteRecordsDialog` take the zone
+  (`QDateTimeEdit::setTimeZone()`) and say "Times are in UTC/local time."; `Exporter::start(..., zone)` writes CSV times
+  in it (header "Time (UTC)" in UTC).
+- F17: geometry, dock/toolbar layout (`saveState(kLayoutVersion)`; the docks and the toolbar have object names), the
+  histogram height (saved as a number: the splitter's own state was scaled to a window size not there yet) and the
+  records header state; saved in `closeEvent`, restored at the end of the constructor. A header state that hides
+  every column shows them all.
+- F1: File → Recent Databases ▸ and a list on the placeholder page (file name button + gray folder, elided in the
+  middle). A database moves to the top when it opens; a missing one gives a message and is removed (opening it would
+  create an empty database).
+- Help → About LogVault (`QMessageBox::about`: icon, name, version from `AppInfo`, Qt version). The application icon
+  (dark slate tile, three log lines marked green/amber/red) was drawn by a throwaway QPainter program;
+  `src/gui/resources/logvault.ico` (16–256 px) is the .exe icon (`LogVault.rc`) and the window icon
+  (`resources.qrc`, AUTORCC on the `LogVault` target); `logvault.png` (256 px) is for documents.
+- Error messages: `MainWindow::warn(title, text, advice)` — what happened, and below it what to do — for every box
+  (open, new database, recent database gone, rename, deletions, import, export, settings file); `reportError(message,
+  advice)` for intake and receiver errors (busy port → "close it, or choose another port in Receiver Settings";
+  failed batch → "free disk space, locked file; the receiver keeps running"). A UTF-16 import asks to save as UTF-8.
+- Rough edges of stage 6: the statistics rows have the records rows' height (`Theme::tableRowHeight()`); the level
+  buttons follow the theme. CSV cells starting with `=`, `+`, `-`, `@` are not changed in this stage (see below).
+- `README.md` rewritten: features, a diagram, build, run, sending logs, the demo, known limitations, three screenshots
+  in `docs/screenshots/` (captures of the real window during the demo: light, Statistics tab, dark).
+
+**Decisions and ASSUMPTIONs**
+
+- Settings live in an INI file, not the registry: easy to show, copy or delete at the defense.
+- "Autostart" starts the receiver whenever a database is opened (the window starts on the placeholder page).
+- "Whole network" = `0.0.0.0` (IPv4, every interface); Windows Firewall may ask once.
+- JSON Lines exports stay in UTC with `Z` (machine-readable, what the import reads back); log lines without a zone are
+  still read as local time whatever the display zone.
+- CSV cells are still written exactly (RFC 4180): a message starting with `=`, `+`, `-` or `@` may show as a formula in
+  Excel (listed in the README). Escaping them with a leading `'` (Message, Source, Fields) is planned for the follow-up
+  review after this stage; it changes the exported data, so it was left out here.
+- The version is 1.0.0 (`project()` in `CMakeLists.txt`).
+- `MainWindow.cpp` is about 1,300 lines of wiring (67 short functions). It was not split in the last stage before
+  the demo, to avoid regressions.
+
+**Tests** (the whole suite: 487 passed, 1 skipped — the performance test)
+
+- New class `TestSettings` (8): defaults, a round trip through an INI file, damaged values, derived values (address,
+  zone, color scheme), the dialog (round trip, blank default source, Restore Defaults), the recent list (newest first,
+  five at most, the same file written differently, removing one missing file among others, cleaning up when read).
+- New functions: `TestHistogram::labelsFollowTheTimeZone` (UTC, a +5:30 zone), `TestRecordTableModel::
+  showsTimesInTheChosenZone`, `TestExporter::csvTimesFollowTheTimeZone`, `TestFilterBar::
+  customPeriodFollowsTheTimeZone`, `periodDialogShowsTheTimeZone`; the histogram, table and exporter tests pass the
+  zone explicitly.
+
+**Checks done**
+
+- Clean rebuild of `build/debug`: no warnings; all tests pass (about 20 s). The `release` preset builds without
+  warnings. Every commit of the branch builds without warnings and passes the tests (built one by one in a separate
+  worktree).
+- Smoke run: `LogVault.exe` alive after 5 s with the title "LogVault", nothing on stderr, closed by `WM_CLOSE`, exit
+  code 0.
+- Scripted runs of the real `MainWindow` on the Windows platform (a throwaway harness in the session scratchpad, its
+  own INI file): theme Dark → Light → System (palette and title bar follow, neutral selection kept), the settings
+  dialog; the layout of one launch (hidden dock, column width/order/hidden column, histogram 250 px, window size)
+  restored in the next; the recent list (missing file → message and removed; an entry from the menu opens and moves to
+  the top); About; the demo with the real Python client (steps 1–4, the screenshots); UTC end to end (table header,
+  CSV header and times, both dialogs). No Qt warnings in any run.
+
+**DESIGN §0.1 audit**
+
+1. *Errors are never lost* — every `exec`/`prepare`/`COMMIT`, file `open`/`read`/`write`/`commit` and `listen` result
+   is checked (grep over `src`); errors reach the user as boxes with advice, intake errors in one shared box; the
+   settings file is checked after every save (reported once). Only a `ROLLBACK` that fails after an error is just
+   logged (`qWarning`) — the error that caused it is reported. **Fixed here:** the settings file errors, advice in
+   every message.
+2. *Bad input never crashes* — covered by the tests of stages 2–6 (broken and oversized lines, dropped connections,
+   empty and UTF-16 files, busy port, foreign, newer and damaged databases); damaged settings values and saved layouts
+   read as defaults. **Fixed here:** a recent database that disappeared is no longer created anew as an empty one; a
+   saved header that hides every column.
+3. *The UI never freezes* — receiving runs in the intake thread; opening, import, search, export and deletion in the
+   pool. The GUI thread waits only when a database is closed or switched (for the current query, import transaction,
+   export block or deletion chunk), with a wait cursor.
+4. *Clean shutdown* — `closeEvent` saves the layout, then `closeDatabase()`: server stopped and the pending batch
+   written (blocking call into the intake thread), importer/exporter/jobs cancelled and awaited, search pool awaited,
+   intake thread `quit()` + `wait()`. Smoke run: exit code 0, no warnings.
+5. *No data loss* — one transaction per batch; a failed batch is reported; pending lines are written at close and at a
+   database switch; a receiver restarted for a new port passes its partial lines on.
+6. *Clean code* — no warnings at any commit, `.clang-format` applied, no debug output, TODOs, commented-out code or
+   non-English text (checked with grep), comments per §7.3; the core is covered by the tests. Size: `src/core` 3,900
+   lines, `src/gui` 4,800 lines (with headers and comments), tests 6,650.
+
+**Demo checklist for the author** (DESIGN §11.1; run it twice in a row)
+
+Preparation: build (`cmake --preset debug && cmake --build --preset debug` with `C:\msys64\ucrt64\bin` first in
+`PATH`); `python examples/python_client.py --count 200000 --file old.log` (the file for step 7); start
+`build\debug\LogVault.exe` (or `LogVault` in CLion).
+
+1. File → New Database… → `demo.lvdb`: title "LogVault — demo.lvdb", status "Found 0 of 0".
+2. Receiver → Start Receiver (Ctrl+R): "Listening on 127.0.0.1:5170"; Live (Ctrl+L): "● Live" at the bottom right.
+3. `python examples/python_client.py --demo` in a terminal: a client in the Receiver panel, about 20 lines/s; records
+   appear once a second, the histogram grows; after about 20 s red bars appear.
+4. Drag across the red bars: the period becomes "… to …" and the bars narrow; click the histogram and press Esc:
+   back to "All time".
+5. Ctrl+click ERROR; Statistics → Group by: Similar messages: `Payment provider timeout after # ms` ≈ 85–90 %.
+6. Records tab: click a payment timeout; in Record Details double-click `provider` → `provider:"bepaid"`; Statistics →
+   Field… → `provider` + Enter: one group, `bepaid`, 100 %.
+7. File → Import Files… → `old.log` → Import: progress and Cancel in the status bar, then "Added 200,000 records";
+   Sources shows a new source `loadtest` (the table keeps the filters of step 6).
+8. File → Export Results… (Ctrl+E) → `demo.csv`: "Exported N records…" in the status bar; open it in Excel: the columns
+   are split, times readable.
+9. Close the window (the client may keep sending).
+
+Second run, right after: start LogVault — same window size and panels, `demo.lvdb` under "Recent databases" on the
+start page; click it: all records are there, no messages; repeat steps 2–8 (export to another name). Also try View →
+Theme → Light/Dark and View → Settings… → Time zone: UTC (the table header says "Time (UTC)"), then back.
+
+If step 2 says the port is in use, another LogVault or program holds 5170: close it, or change the port in Receiver
+Settings (and run the client with `--port`).
+
+**Known limitations** — Windows only, run with MSYS2 in `PATH` (no installer, by decision); JSON and plain text
+lines only; zone-less log times are local; CSV cells are not yet escaped for Excel formulas; statistics by message
+over a million records take about 1 s; `MainWindow.cpp` is long (see above).
+
+**For the author**
+
+- Run the demo checklist above twice; the screenshots in `docs/screenshots/` were captured by the agent from the
+  real window (replace them with your own if you like).
+- DESIGN §12 left the explanatory note (the coursework report) and the UML diagrams for after the application —
+  that is the next step.

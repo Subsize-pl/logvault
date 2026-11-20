@@ -1,0 +1,2 @@
+// The icon of LogVault.exe in Explorer and on the taskbar; the window icon comes from resources.qrc.
+IDI_ICON1 ICON "resources/logvault.ico"

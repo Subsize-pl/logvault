@@ -22,6 +22,10 @@ qt_add_library(lv_gui STATIC
     RecordDetailsPanel.h
     RecordTableModel.cpp
     RecordTableModel.h
+    Settings.cpp
+    Settings.h
+    SettingsDialog.cpp
+    SettingsDialog.h
     SourcesPanel.cpp
     SourcesPanel.h
     StatsView.cpp
@@ -37,11 +41,14 @@ target_link_libraries(lv_gui PUBLIC lv_core Qt6::Widgets)
 lv_enable_warnings(lv_gui)
 
 qt_add_executable(LogVault
+    LogVault.rc
     main.cpp
+    resources.qrc
 )
 
 # A GUI application: no console window. Qt's entry point library provides WinMain and calls main().
-set_target_properties(LogVault PROPERTIES WIN32_EXECUTABLE TRUE)
+# AUTORCC compiles resources.qrc (the window icon); LogVault.rc gives the .exe its icon.
+set_target_properties(LogVault PROPERTIES WIN32_EXECUTABLE TRUE AUTORCC ON)
 
 target_link_libraries(LogVault PRIVATE lv_gui)
 lv_enable_warnings(LogVault)

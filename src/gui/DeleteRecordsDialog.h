@@ -3,6 +3,7 @@
 #include "LogStore.h"
 
 #include <QDialog>
+#include <QTimeZone>
 #include <QVector>
 
 #include <optional>
@@ -12,14 +13,15 @@ class QDateTimeEdit;
 class QRadioButton;
 
 /// Asks which records "Delete Records Older Than" deletes (DESIGN.md sections 1.2, F3, and 6.7): those before
-/// a local date and time, of every source or of one.
+/// a date and time in the display zone, of every source or of one.
 class DeleteRecordsDialog : public QDialog {
     Q_OBJECT
 
 public:
-    /// selectedSourceId: the source chosen at first, if one is selected in the Sources panel.
+    /// selectedSourceId: the source chosen at first, if one is selected in the Sources panel. The date and
+    /// time are shown and entered in the zone.
     DeleteRecordsDialog(const QVector<SourceInfo>& sources, std::optional<qint64> selectedSourceId,
-                        QWidget* parent = nullptr);
+                        const QTimeZone& zone, QWidget* parent = nullptr);
 
     /// Records strictly before this time go, ms UTC.
     qint64 before() const;

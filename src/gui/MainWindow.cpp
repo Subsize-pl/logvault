@@ -11,11 +11,13 @@
 #include "ReceiverPanel.h"
 #include "RecordDetailsPanel.h"
 #include "RecordTableModel.h"
+#include "SettingsDialog.h"
 #include "SourcesPanel.h"
 #include "StatsView.h"
 #include "TaskStatus.h"
 #include "Theme.h"
 
+#include <QActionGroup>
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDateTime>
@@ -26,6 +28,7 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGridLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -39,34 +42,44 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStyle>
+#include <QStyleHints>
 #include <QTabWidget>
 #include <QTableView>
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
+#include <array>
 #include <initializer_list>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
 namespace {
 
-// Defaults of the settings in DESIGN.md section 1.2 (F16): the receiver listens on this computer only, on
-// the port the Python client uses, and the table shows the newest 10,000 matches.
-constexpr QHostAddress::SpecialAddress kReceiverAddress = QHostAddress::LocalHost;
-constexpr quint16 kReceiverPort = 5170;
-constexpr int kMaxRows = 10'000;
-
 // A search that takes longer shows "Searching..."; for faster ones the text would only flicker.
 constexpr int kSearchingDelayMs = 300;
 constexpr int kMessageTimeoutMs = 5000;
 constexpr int kHistogramHeight = 120;
+constexpr int kMaxHistogramHeight = 2000;
+// The widest a recent database's folder is shown on the placeholder page, in pixels.
+constexpr int kRecentFolderWidth = 420;
+
+// The window's layout in the settings file (DESIGN.md section 1.2, F17). The version goes up when the
+// docks or the toolbar change, so an old layout is not forced on new panels.
+constexpr auto kGeometryKey = "window/geometry"_L1;
+constexpr auto kStateKey = "window/state"_L1;
+constexpr auto kHistogramHeightKey = "window/histogramHeight"_L1;
+constexpr auto kColumnsKey = "window/recordColumns"_L1;
+constexpr int kLayoutVersion = 1;
 
 constexpr QChar kDot(0x25CF);
 constexpr QChar kEmDash(0x2014);
@@ -89,9 +102,11 @@ QStringList localFiles(const QMimeData* data) {
 
 } // namespace
 
-MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent), m_records(new RecordTableModel(this)), m_searchService(new SearchService(this)),
-      m_jobs(new DatabaseJobs(this)), m_importer(new FileImporter(this)), m_exporter(new Exporter(this)),
+MainWindow::MainWindow(QSettings& store, QWidget* parent)
+    : QMainWindow(parent), m_store(store), m_settings(Settings::load(store)),
+      m_recent(RecentDatabases::load(store)), m_records(new RecordTableModel(this)),
+      m_searchService(new SearchService(this)), m_jobs(new DatabaseJobs(this)),
+      m_importer(new FileImporter(this)), m_exporter(new Exporter(this)),
       m_live(new LiveUpdater(LiveUpdater::kDefaultIntervalMs, this)), m_searchingTimer(new QTimer(this)) {
     setWindowTitle(AppInfo::name());
     setAcceptDrops(true);
@@ -102,16 +117,21 @@ MainWindow::MainWindow(QWidget* parent)
     createCentralArea();
     createStatusBar();
     connectWidgets();
+    showRecent();
+    applyTheme();
+    applyTimeZone();
     showReceiverStats({});
     updateActions();
     updateLiveIndicator();
-    // Most of the screen, so the panels and the table have room, but not all of it.
-    resize(screen()->availableGeometry().size() * 0.85);
+    restoreLayout();
+    // A settings file that cannot be read is reported once the window is up.
+    QMetaObject::invokeMethod(this, &MainWindow::syncStore, Qt::QueuedConnection);
 }
 
 MainWindow::~MainWindow() { closeDatabase(); }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    saveLayout();
     closeDatabase();
     event->accept();
 }
@@ -190,19 +210,47 @@ void MainWindow::createActions() {
     m_findAction->setShortcut(QKeySequence::Find);
     connect(m_findAction, &QAction::triggered, this, [this] { m_filterBar->focusSearchLine(); });
     addAction(m_findAction);
+
+    m_settingsAction = new QAction(tr("&Settings..."), this);
+    connect(m_settingsAction, &QAction::triggered, this, [this] { showSettings(false); });
+    m_aboutAction = new QAction(tr("&About %1").arg(AppInfo::name()), this);
+    connect(m_aboutAction, &QAction::triggered, this, &MainWindow::showAbout);
+
+    m_receiverSettingsAction = new QAction(tr("Receiver &Settings..."), this);
+    connect(m_receiverSettingsAction, &QAction::triggered, this, [this] { showSettings(true); });
+
+    // View > Theme: the theme of the settings dialog, one click away.
+    m_themeActions = new QActionGroup(this);
+    const std::array<std::pair<Settings::ThemeMode, QString>, 3> themes = {
+        {{Settings::ThemeMode::System, tr("&System")},
+         {Settings::ThemeMode::Light, tr("&Light")},
+         {Settings::ThemeMode::Dark, tr("&Dark")}}};
+    for (const auto& [mode, text] : themes) {
+        QAction* action = m_themeActions->addAction(text);
+        action->setCheckable(true);
+        action->setData(static_cast<int>(mode));
+        connect(action, &QAction::triggered, this, [this, mode] {
+            Settings settings = m_settings;
+            settings.theme = mode;
+            applySettings(settings);
+        });
+    }
 }
 
 void MainWindow::createDocks() {
     m_sourcesPanel = new SourcesPanel({m_renameSourceAction, m_deleteSourceAction});
     m_receiverPanel = new ReceiverPanel(m_receiverAction);
     m_detailsPanel = new RecordDetailsPanel;
-    m_sourcesDock = addPanel(tr("Sources"), m_sourcesPanel, Qt::LeftDockWidgetArea);
-    m_receiverDock = addPanel(tr("Receiver"), m_receiverPanel, Qt::LeftDockWidgetArea);
-    m_detailsDock = addPanel(tr("Record Details"), m_detailsPanel, Qt::RightDockWidgetArea);
+    m_sourcesDock = addPanel(u"sources"_s, tr("Sources"), m_sourcesPanel, Qt::LeftDockWidgetArea);
+    m_receiverDock = addPanel(u"receiver"_s, tr("Receiver"), m_receiverPanel, Qt::LeftDockWidgetArea);
+    m_detailsDock = addPanel(u"details"_s, tr("Record Details"), m_detailsPanel, Qt::RightDockWidgetArea);
 }
 
-QDockWidget* MainWindow::addPanel(const QString& title, QWidget* panel, Qt::DockWidgetArea area) {
+QDockWidget* MainWindow::addPanel(const QString& name, const QString& title, QWidget* panel,
+                                  Qt::DockWidgetArea area) {
     auto* dock = new QDockWidget(title, this);
+    // saveState() finds the docks by their object names.
+    dock->setObjectName(name);
     dock->setWidget(panel);
     addDockWidget(area, dock);
     return dock;
@@ -212,6 +260,7 @@ void MainWindow::createMenus() {
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(m_newAction);
     file->addAction(m_openAction);
+    m_recentMenu = file->addMenu(tr("&Recent Databases"));
     file->addSeparator();
     file->addAction(m_importAction);
     file->addAction(m_exportAction);
@@ -226,6 +275,8 @@ void MainWindow::createMenus() {
 
     QMenu* receiver = menuBar()->addMenu(tr("&Receiver"));
     receiver->addAction(m_receiverAction);
+    receiver->addSeparator();
+    receiver->addAction(m_receiverSettingsAction);
 
     QMenu* view = menuBar()->addMenu(tr("&View"));
     QMenu* panels = view->addMenu(tr("&Panels"));
@@ -235,10 +286,17 @@ void MainWindow::createMenus() {
     view->addSeparator();
     view->addAction(m_liveAction);
     view->addAction(m_refreshAction);
+    view->addSeparator();
+    view->addMenu(tr("&Theme"))->addActions(m_themeActions->actions());
+    view->addAction(m_settingsAction);
+
+    QMenu* help = menuBar()->addMenu(tr("&Help"));
+    help->addAction(m_aboutAction);
 }
 
 void MainWindow::createToolBar() {
     QToolBar* toolBar = addToolBar(tr("Main"));
+    toolBar->setObjectName(u"toolBar"_s);
     toolBar->setMovable(false);
     toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toolBar->addAction(m_openAction);
@@ -282,6 +340,12 @@ QWidget* MainWindow::createPlaceholder() {
     buttons->addWidget(openButton);
     buttons->addStretch();
 
+    // Filled by showRecent().
+    m_recentList = new QWidget;
+    auto* recentGrid = new QGridLayout(m_recentList);
+    recentGrid->setContentsMargins(0, 0, 0, 0);
+    recentGrid->setColumnStretch(2, 1);
+
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->addStretch();
@@ -289,6 +353,8 @@ QWidget* MainWindow::createPlaceholder() {
     layout->addWidget(hint);
     layout->addSpacing(16);
     layout->addLayout(buttons);
+    layout->addSpacing(24);
+    layout->addWidget(m_recentList, 0, Qt::AlignHCenter);
     layout->addStretch();
     return page;
 }
@@ -303,19 +369,19 @@ QWidget* MainWindow::createWorkspace() {
     m_tabs->addTab(m_table, tr("Records"));
     m_tabs->addTab(m_statsView, tr("Statistics"));
 
-    auto* splitter = new QSplitter(Qt::Vertical);
-    splitter->addWidget(m_histogram);
-    splitter->addWidget(m_tabs);
-    splitter->setStretchFactor(1, 1);
-    splitter->setChildrenCollapsible(false);
+    m_splitter = new QSplitter(Qt::Vertical);
+    m_splitter->addWidget(m_histogram);
+    m_splitter->addWidget(m_tabs);
+    m_splitter->setStretchFactor(1, 1);
+    m_splitter->setChildrenCollapsible(false);
     // The histogram starts at its height and the tabs, the only part that stretches, take the rest. Left to
     // itself, the splitter would size the histogram from a widget that has not been laid out yet.
-    splitter->setSizes({kHistogramHeight, kHistogramHeight});
+    m_splitter->setSizes({kHistogramHeight, kHistogramHeight});
 
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->addWidget(m_filterBar);
-    layout->addWidget(splitter, 1);
+    layout->addWidget(m_splitter, 1);
     return page;
 }
 
@@ -333,8 +399,7 @@ QTableView* MainWindow::createRecordsTable() {
     QHeaderView* rows = table->verticalHeader();
     rows->hide();
     rows->setSectionResizeMode(QHeaderView::Fixed);
-    rows->setDefaultSectionSize(
-        qMax(table->fontMetrics().height(), QFontMetrics(Theme::monospaceFont()).height()) + 6);
+    rows->setDefaultSectionSize(Theme::tableRowHeight(table->font()));
 
     QFont bold = table->font();
     bold.setBold(true);
@@ -343,7 +408,7 @@ QTableView* MainWindow::createRecordsTable() {
     columns->setStretchLastSection(true);
     columns->setHighlightSections(false);
     columns->resizeSection(RecordTableModel::TimeColumn,
-                           table->fontMetrics().horizontalAdvance(Format::timestamp(0)) + 24);
+                           table->fontMetrics().horizontalAdvance(Format::timestamp(0, QTimeZone::UTC)) + 24);
     columns->resizeSection(RecordTableModel::LevelColumn,
                            QFontMetrics(bold).horizontalAdvance(levelName(Level::Unknown)) + 24);
     columns->resizeSection(RecordTableModel::SourceColumn, table->fontMetrics().averageCharWidth() * 16);
@@ -451,6 +516,41 @@ void MainWindow::connectWidgets() {
     connect(m_table->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::updateLivePause);
 }
 
+void MainWindow::restoreLayout() {
+    // Without a saved layout: most of the screen, so the panels and the table have room, but not all of it.
+    if (!restoreGeometry(m_store.value(kGeometryKey).toByteArray())) {
+        resize(screen()->availableGeometry().size() * 0.85);
+    }
+    // Each part keeps its default when its saved state is missing or does not fit.
+    restoreState(m_store.value(kStateKey).toByteArray(), kLayoutVersion);
+    // The height alone, set as at the start: the splitter's own state would be scaled to a size the window
+    // does not have yet.
+    bool ok = false;
+    const int height = m_store.value(kHistogramHeightKey).toInt(&ok);
+    if (ok && height >= m_histogram->minimumSizeHint().height() && height <= kMaxHistogramHeight) {
+        m_splitter->setSizes({height, height});
+    }
+    QHeaderView* columns = m_table->horizontalHeader();
+    if (columns->restoreState(m_store.value(kColumnsKey).toByteArray()) &&
+        columns->hiddenSectionCount() == columns->count()) {
+        // A table without columns has no header to bring them back with.
+        for (int column = 0; column < columns->count(); ++column) {
+            columns->showSection(column);
+        }
+    }
+}
+
+void MainWindow::saveLayout() {
+    m_store.setValue(kGeometryKey, saveGeometry());
+    m_store.setValue(kStateKey, saveState(kLayoutVersion));
+    // A splitter that was never shown has no height of its own.
+    if (m_splitter->isVisible()) {
+        m_store.setValue(kHistogramHeightKey, m_splitter->sizes().value(0));
+    }
+    m_store.setValue(kColumnsKey, m_table->horizontalHeader()->saveState());
+    syncStore();
+}
+
 void MainWindow::newDatabase() {
     QString path = QFileDialog::getSaveFileName(this, tr("New Database"), dialogDirectory() + u"/logs.lvdb"_s,
                                                 databaseFilter(), nullptr, QFileDialog::DontConfirmOverwrite);
@@ -462,11 +562,8 @@ void MainWindow::newDatabase() {
     }
     // A new database never replaces a file, so a slip in the dialog cannot lose data.
     if (QFileInfo::exists(path)) {
-        QMessageBox::warning(
-            this, tr("New Database"),
-            tr("%1 already exists.\n\nChoose another name, or open the file with File > Open "
-               "Database.")
-                .arg(QDir::toNativeSeparators(path)));
+        warn(tr("New Database"), tr("%1 already exists.").arg(QDir::toNativeSeparators(path)),
+             tr("Choose another name, or open the file with File > Open Database."));
         return;
     }
     openDatabase(path);
@@ -478,6 +575,19 @@ void MainWindow::chooseDatabase() {
     if (!path.isEmpty()) {
         openDatabase(path);
     }
+}
+
+void MainWindow::openRecent(const QString& path) {
+    // Opening a missing file would create an empty database in its place.
+    if (!QFileInfo(path).isFile()) {
+        warn(tr("Open Database"), tr("%1 no longer exists.").arg(QDir::toNativeSeparators(path)),
+             tr("It is removed from the recent databases. If the file was moved or renamed, open it with "
+                "File > Open Database."));
+        // After the message: the list's buttons are replaced, and the one clicked must outlive its click.
+        setRecent(RecentDatabases::removed(m_recent, path));
+        return;
+    }
+    openDatabase(path);
 }
 
 void MainWindow::openDatabase(const QString& path) {
@@ -494,12 +604,13 @@ void MainWindow::switchDatabase(const QString& path) {
     const bool receiverWasOn = m_receiverListening;
     closeDatabase();
     m_databasePath = path;
+    setRecent(RecentDatabases::added(m_recent, path));
     m_searchService->setDatabasePath(path);
     startIntake(path);
     setWindowTitle(AppInfo::name() + u' ' + kEmDash + u' ' + QFileInfo(path).fileName());
     m_pages->setCurrentWidget(m_workspacePage);
     // Clients keep sending while the user switches databases, so a running receiver goes on with the new one.
-    if (receiverWasOn) {
+    if (receiverWasOn || m_settings.autostartReceiver) {
         startReceiver();
     }
     updateActions();
@@ -556,6 +667,66 @@ void MainWindow::closeDatabase() {
     QGuiApplication::restoreOverrideCursor();
 }
 
+void MainWindow::setRecent(const QStringList& paths) {
+    m_recent = paths;
+    RecentDatabases::save(m_store, m_recent);
+    syncStore();
+    showRecent();
+}
+
+void MainWindow::showRecent() {
+    m_recentMenu->clear();
+    for (qsizetype i = 0; i < m_recent.size(); ++i) {
+        const QString path = m_recent[i];
+        // An ampersand in a path would underline the next letter instead of showing.
+        QString text = QDir::toNativeSeparators(path);
+        text.replace(u'&', u"&&"_s);
+        QAction* action = m_recentMenu->addAction(u"&%1 %2"_s.arg(i + 1).arg(text));
+        connect(action, &QAction::triggered, this, [this, path] { openRecent(path); });
+    }
+    if (m_recent.isEmpty()) {
+        m_recentMenu->addAction(tr("No recent databases"))->setEnabled(false);
+    }
+
+    // The same list on the placeholder page. A button may be the one being clicked, so it is deleted later.
+    auto* list = qobject_cast<QGridLayout*>(m_recentList->layout());
+    while (QLayoutItem* item = list->takeAt(0)) {
+        if (item->widget() != nullptr) {
+            item->widget()->deleteLater();
+        }
+        delete item;
+    }
+    if (m_recent.isEmpty()) {
+        return;
+    }
+    auto* heading = new QLabel(tr("Recent databases"));
+    QFont bold = heading->font();
+    bold.setBold(true);
+    heading->setFont(bold);
+    list->addWidget(heading, 0, 0, 1, 2);
+    for (int row = 1; const QString& path : m_recent) {
+        // A row: the file name to click, and its folder in gray, shortened in the middle if long.
+        const QFileInfo file(path);
+        QString name = file.fileName();
+        name.replace(u'&', u"&&"_s);
+        auto* button = new QToolButton;
+        button->setAutoRaise(true);
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        button->setIcon(m_openAction->icon());
+        button->setText(name);
+        button->setToolTip(QDir::toNativeSeparators(path));
+        button->setCursor(Qt::PointingHandCursor);
+        connect(button, &QToolButton::clicked, this, [this, path] { openRecent(path); });
+        auto* folder = new QLabel;
+        folder->setForegroundRole(QPalette::PlaceholderText);
+        folder->setText(folder->fontMetrics().elidedText(QDir::toNativeSeparators(file.absolutePath()),
+                                                         Qt::ElideMiddle, kRecentFolderWidth));
+        list->addWidget(button, row, 0);
+        list->addWidget(folder, row, 1);
+        ++row;
+    }
+}
+
 void MainWindow::startIntake(const QString& path) {
     // Neither object has a parent: both move to the intake thread, which deletes them when it finishes.
     m_intakeThread = new QThread(this);
@@ -568,7 +739,7 @@ void MainWindow::startIntake(const QString& path) {
     // Both live in the intake thread, so lines are handed over by a direct call; the rest is queued here.
     connect(m_server, &TcpServer::linesReceived, m_ingestor, &Ingestor::addLines);
     connect(m_ingestor, &Ingestor::recordsWritten, m_live, &LiveUpdater::recordsWritten);
-    connect(m_ingestor, &Ingestor::errorOccurred, this, &MainWindow::reportError);
+    connect(m_ingestor, &Ingestor::errorOccurred, this, &MainWindow::showIntakeError);
     connect(m_server, &TcpServer::errorOccurred, this, &MainWindow::showReceiverError);
     connect(m_server, &TcpServer::statsChanged, this, &MainWindow::showReceiverStats);
     m_intakeThread->start();
@@ -607,18 +778,26 @@ void MainWindow::startReceiver() {
     }
     m_receiverStarting = true;
     TcpServer* server = m_server;
-    QMetaObject::invokeMethod(server,
-                              [server] { server->start(QHostAddress(kReceiverAddress), kReceiverPort); });
+    const QHostAddress address = m_settings.receiverAddress();
+    const quint16 port = m_settings.port;
+    const QString source = m_settings.defaultSource;
+    QMetaObject::invokeMethod(server, [server, address, port, source] {
+        server->setDefaultSource(source);
+        server->start(address, port);
+    });
 }
 
 void MainWindow::showReceiverStats(const ReceiverStats& stats) {
     m_receiverStarting = false;
     m_receiverPanel->setStats(stats);
-    if (stats.listening == m_receiverListening && !m_receiverAction->text().isEmpty()) {
-        return;
+    if (stats.listening != m_receiverListening || m_receiverAction->text().isEmpty()) {
+        m_receiverListening = stats.listening;
+        updateReceiverAction();
     }
-    m_receiverListening = stats.listening;
-    if (stats.listening) {
+}
+
+void MainWindow::updateReceiverAction() {
+    if (m_receiverListening) {
         m_receiverAction->setText(tr("Stop &Receiver"));
         m_receiverAction->setIcon(Theme::glyphIcon(Theme::Glyph::Stop));
         m_receiverAction->setToolTip(tr("Stop receiving logs"));
@@ -626,17 +805,26 @@ void MainWindow::showReceiverStats(const ReceiverStats& stats) {
         m_receiverAction->setText(tr("Start &Receiver"));
         m_receiverAction->setIcon(Theme::glyphIcon(Theme::Glyph::Start));
         m_receiverAction->setToolTip(tr("Receive logs over TCP on %1:%2")
-                                         .arg(QHostAddress(kReceiverAddress).toString())
-                                         .arg(kReceiverPort));
+                                         .arg(m_settings.receiverAddress().toString())
+                                         .arg(m_settings.port));
     }
 }
 
 void MainWindow::showReceiverError(const QString& message) {
     // A start that fails almost always means that another program holds the port.
-    reportError(
-        m_receiverStarting
-            ? tr("%1\n\nAnother program, or another LogVault window, may be using this port.").arg(message)
-            : message);
+    reportError(message,
+                m_receiverStarting
+                    ? tr("Another program, or another LogVault window, may be using this port. Close "
+                         "it, or choose another port in Receiver > Receiver Settings.")
+                    : QString());
+}
+
+void MainWindow::showIntakeError(const QString& message) {
+    // The batch is lost, but the receiver goes on: the next batches are written as usual.
+    reportError(message,
+                tr("Check that the disk has free space and that no other program locks the database "
+                   "file. The receiver keeps running, and lines that arrive later are saved as soon as "
+                   "writing works again."));
 }
 
 void MainWindow::chooseImportFiles() {
@@ -679,8 +867,10 @@ void MainWindow::showImportSummary(const ImportSummary& summary) {
                                .arg(Format::count(summary.added), Format::count(summary.unparsed),
                                     Format::duration(summary.elapsedMs));
     if (!summary.error.isEmpty()) {
-        QMessageBox::warning(this, tr("Import"),
-                             tr("The import stopped: %1\n\n%2").arg(summary.error, counts));
+        warn(tr("Import"), tr("The import stopped: %1").arg(summary.error),
+             counts + u' ' +
+                 tr("The records added so far stay in the database. Once the problem is fixed, import the "
+                    "files that were not imported yet."));
     } else if (summary.cancelled) {
         QMessageBox::information(
             this, tr("Import"),
@@ -736,12 +926,13 @@ void MainWindow::deleteOldRecords() {
         return;
     }
     const std::optional<SourceInfo> selected = m_sourcesPanel->selectedSource();
+    const QTimeZone zone = m_settings.displayZone();
     DeleteRecordsDialog dialog(m_sourcesPanel->sources(),
-                               selected ? std::optional<qint64>(selected->id) : std::nullopt, this);
+                               selected ? std::optional<qint64>(selected->id) : std::nullopt, zone, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
-    const QString when = Format::dateTime(dialog.before());
+    const QString when = Format::dateTime(dialog.before(), zone);
     const QString what =
         dialog.sourceId() == 0
             ? tr("Delete the records of all sources older than %1?").arg(when)
@@ -784,7 +975,8 @@ void MainWindow::chooseExportFile() {
     const ExportFormat format =
         suffix == u"jsonl"_s || suffix == u"json"_s ? ExportFormat::JsonLines : ExportFormat::Csv;
     // The table shows at most maxRows; the export takes every match of the same filters.
-    if (m_exporter->start(m_databasePath, currentFilters(), path, format, Exporter::listSeparator())) {
+    if (m_exporter->start(m_databasePath, currentFilters(), path, format, Exporter::listSeparator(),
+                          m_settings.displayZone())) {
         m_exportTask->start(tr("Exporting to %1").arg(QFileInfo(path).fileName()), true, true);
         updateActions();
     }
@@ -795,7 +987,9 @@ void MainWindow::showExportSummary(const ExportSummary& summary) {
     updateActions();
     const QString nativePath = QDir::toNativeSeparators(summary.path);
     if (!summary.error.isEmpty()) {
-        QMessageBox::warning(this, tr("Export Results"), tr("The export failed: %1").arg(summary.error));
+        warn(tr("Export Results"), tr("The export failed: %1").arg(summary.error),
+             tr("No file was written. Choose another file or folder; a file that is open in another program, "
+                "such as Excel, cannot be replaced until it is closed there."));
     } else if (summary.cancelled) {
         statusBar()->showMessage(tr("The export was cancelled; %1 was not written.").arg(nativePath),
                                  kMessageTimeoutMs);
@@ -821,21 +1015,27 @@ void MainWindow::showJobResult(const DatabaseJobResult& result) {
         if (result.error.isEmpty()) {
             switchDatabase(result.databasePath);
         } else {
-            QMessageBox::warning(this, tr("Open Database"), result.error);
+            // The database that was open stays open: it is closed only when the new one is ready.
+            warn(tr("Open Database"), result.error,
+                 m_databasePath.isEmpty()
+                     ? tr("Choose another file, or create a new database with File > New Database.")
+                     : tr("%1 stays open. Choose another file, or create a new database with File > New "
+                          "Database.")
+                           .arg(QFileInfo(m_databasePath).fileName()));
         }
         break;
     case DatabaseJobResult::Kind::RenameSource:
         search();
         if (!result.error.isEmpty()) {
-            QMessageBox::warning(this, tr("Rename Source"), result.error);
+            warn(tr("Rename Source"), result.error, tr("The source keeps its name."));
         }
         break;
     case DatabaseJobResult::Kind::DeleteSource:
         search();
         if (!result.error.isEmpty()) {
-            QMessageBox::warning(
-                this, tr("Delete Source"),
-                tr("%1\n\nRecords deleted before the error stay deleted.").arg(result.error));
+            warn(tr("Delete Source"), result.error,
+                 tr("The records deleted before the error stay deleted. Delete the source again to delete "
+                    "the rest."));
         } else if (result.cancelled) {
             statusBar()->showMessage(tr("Deleting \"%1\" was cancelled; %2 of its records were deleted.")
                                          .arg(m_jobSource, Format::count(result.deleted)),
@@ -849,9 +1049,9 @@ void MainWindow::showJobResult(const DatabaseJobResult& result) {
     case DatabaseJobResult::Kind::DeleteOldRecords:
         search();
         if (!result.error.isEmpty()) {
-            QMessageBox::warning(
-                this, tr("Delete Old Records"),
-                tr("%1\n\nRecords deleted before the error stay deleted.").arg(result.error));
+            warn(tr("Delete Old Records"), result.error,
+                 tr("The records deleted before the error stay deleted. Run the deletion again to delete the "
+                    "rest."));
         } else if (result.cancelled) {
             statusBar()->showMessage(tr("Deleting old records was cancelled; %1 records were deleted.")
                                          .arg(Format::count(result.deleted)),
@@ -876,7 +1076,7 @@ void MainWindow::search() {
         return;
     }
     SearchRequest request = currentFilters();
-    request.maxRows = kMaxRows;
+    request.maxRows = m_settings.maxRows;
     m_statsView->prepareRequest(request, m_tabs->currentWidget() == m_statsView);
     // SearchService delivers the result of the latest search only, so an earlier one never overwrites it.
     m_searchService->search(request);
@@ -971,12 +1171,96 @@ void MainWindow::resumeLive() {
     m_table->scrollToTop();
 }
 
+void MainWindow::showSettings(bool receiverFirst) {
+    SettingsDialog dialog(m_settings, this);
+    if (receiverFirst) {
+        dialog.focusReceiver();
+    }
+    if (dialog.exec() == QDialog::Accepted) {
+        applySettings(dialog.settings());
+    }
+}
+
+void MainWindow::applySettings(const Settings& settings) {
+    const Settings before = std::exchange(m_settings, settings);
+    m_settings.save(m_store);
+    syncStore();
+    if (m_settings.theme != before.theme) {
+        applyTheme();
+    }
+    if (m_settings.timeZone != before.timeZone) {
+        applyTimeZone();
+    }
+    // A running receiver moves to the new address or port at once (clients reconnect); a new default source
+    // needs no restart.
+    if ((m_settings.port != before.port || m_settings.wholeNetwork != before.wholeNetwork) &&
+        m_receiverListening) {
+        startReceiver();
+    } else if (m_settings.defaultSource != before.defaultSource && m_server != nullptr) {
+        TcpServer* server = m_server;
+        const QString source = m_settings.defaultSource;
+        QMetaObject::invokeMethod(server, [server, source] { server->setDefaultSource(source); });
+    }
+    updateReceiverAction();
+    if (m_settings.maxRows != before.maxRows) {
+        search();
+    }
+}
+
+void MainWindow::applyTheme() {
+    // Qt asks Windows for the palette of the scheme; main() adjusts every new palette
+    // (Theme::neutralPalette()).
+    QGuiApplication::styleHints()->setColorScheme(m_settings.colorScheme());
+    for (QAction* action : m_themeActions->actions()) {
+        action->setChecked(static_cast<Settings::ThemeMode>(action->data().toInt()) == m_settings.theme);
+    }
+}
+
+void MainWindow::applyTimeZone() {
+    const QTimeZone zone = m_settings.displayZone();
+    m_records->setTimeZone(zone);
+    m_detailsPanel->setTimeZone(zone);
+    m_histogram->setTimeZone(zone);
+    m_filterBar->setTimeZone(zone);
+    m_receiverPanel->setTimeZone(zone);
+}
+
+void MainWindow::syncStore() {
+    m_store.sync();
+    const QSettings::Status status = m_store.status();
+    // Said once: whatever keeps the file from being read or written stays until LogVault is closed.
+    if (status == QSettings::NoError || m_storeErrorShown) {
+        return;
+    }
+    m_storeErrorShown = true;
+    const QString file = QDir::toNativeSeparators(m_store.fileName());
+    if (status == QSettings::AccessError) {
+        warn(tr("Settings"), tr("Cannot save the settings to %1.").arg(file),
+             tr("The file or its folder cannot be written to. Changed settings apply until LogVault is "
+                "closed."));
+    } else {
+        warn(tr("Settings"), tr("The settings file %1 is damaged.").arg(file),
+             tr("LogVault cannot read all of it or save to it. Delete the file to start with the default "
+                "settings."));
+    }
+}
+
+void MainWindow::showAbout() {
+    // The box shows the application icon.
+    QMessageBox::about(this, tr("About %1").arg(AppInfo::name()),
+                       tr("<h3>%1 %2</h3><p>Receives logs over TCP and from files, stores them in SQLite and "
+                          "lets you search, filter and analyze them.</p><p>Qt %3</p>")
+                           .arg(AppInfo::name(), AppInfo::version(), QString::fromLatin1(qVersion())));
+}
+
 void MainWindow::updateActions() {
     const bool open = !m_databasePath.isEmpty();
     const bool jobRunning = m_jobs->isRunning();
     const bool sourceSelected = open && m_sourcesPanel->selectedSource().has_value();
     m_newAction->setEnabled(!jobRunning);
     m_openAction->setEnabled(!jobRunning);
+    m_recentMenu->setEnabled(!jobRunning);
+    m_recentList->setEnabled(!jobRunning);
     m_importAction->setEnabled(canImport());
     m_renameSourceAction->setEnabled(sourceSelected && !jobRunning);
     m_deleteSourceAction->setEnabled(sourceSelected && !jobRunning);
@@ -988,7 +1272,14 @@ void MainWindow::updateActions() {
     m_findAction->setEnabled(open);
 }
 
-void MainWindow::reportError(const QString& message) {
+void MainWindow::warn(const QString& title, const QString& text, const QString& advice) {
+    // What happened in the text, what to do about it in the smaller print below.
+    QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::Ok, this);
+    box.setInformativeText(advice);
+    box.exec();
+}
+
+void MainWindow::reportError(const QString& message, const QString& advice) {
     // Errors that come by themselves (intake, receiver) share one window, so a burst of them does not open
     // a window each.
     if (m_errorBox == nullptr) {
@@ -998,13 +1289,15 @@ void MainWindow::reportError(const QString& message) {
     }
     if (m_errorBox->isVisible()) {
         ++m_errorsSinceShown;
-        m_errorBox->setInformativeText(tr("%1 more errors since then; the last one: %2")
-                                           .arg(Format::count(m_errorsSinceShown), message));
+        const QString more =
+            tr("%1 more errors since then; the last one: %2").arg(Format::count(m_errorsSinceShown), message);
+        m_errorBox->setInformativeText(m_errorAdvice.isEmpty() ? more : m_errorAdvice + u"\n\n"_s + more);
         return;
     }
     m_errorsSinceShown = 0;
+    m_errorAdvice = advice;
     m_errorBox->setText(message);
-    m_errorBox->setInformativeText(QString());
+    m_errorBox->setInformativeText(advice);
     m_errorBox->show();
 }
 

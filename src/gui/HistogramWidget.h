@@ -4,6 +4,7 @@
 
 #include <QRectF>
 #include <QString>
+#include <QTimeZone>
 #include <QVector>
 #include <QWidget>
 
@@ -26,6 +27,9 @@ public:
     /// Shows nothing, as while no database is open.
     void clear();
 
+    /// The zone of the time labels and the tooltips; local time at first.
+    void setTimeZone(const QTimeZone& zone);
+
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
@@ -38,15 +42,15 @@ public:
     /// when a bar is barWidth pixels wide.
     static qint64 labelInterval(qint64 step, qreal barWidth, qreal minSpacing);
 
-    /// The bar boundaries (0 = the start of the first bar) that get a label: those at local times that are a
-    /// multiple of the interval, or at such UTC times when there are none (days start at UTC midnight).
-    static QVector<int> labelBoundaries(const Histogram& histogram, qint64 interval);
+    /// The bar boundaries (0 = the start of the first bar) that get a label: those at times of the zone that
+    /// are a multiple of the interval, or at such UTC times when there are none (days start at UTC midnight).
+    static QVector<int> labelBoundaries(const Histogram& histogram, qint64 interval, const QTimeZone& zone);
 
-    /// A label as precise as the interval needs; a label at local midnight shows the date instead.
-    static QString labelText(qint64 msecs, qint64 interval);
+    /// A label in the zone, as precise as the interval needs; a label at midnight shows the date instead.
+    static QString labelText(qint64 msecs, qint64 interval, const QTimeZone& zone);
 
-    /// The tooltip of a bar (rich text): its interval, its records and the count of each level in it.
-    static QString toolTipText(const Histogram& histogram, int bar);
+    /// The tooltip of a bar (rich text): its interval in the zone, its records and the count of each level.
+    static QString toolTipText(const Histogram& histogram, int bar, const QTimeZone& zone);
 
 signals:
     /// The user dragged across bars: the period they cover, ms UTC, the end exclusive.
@@ -76,6 +80,7 @@ private:
     QColor axisColor(int alpha) const;
 
     Histogram m_histogram;
+    QTimeZone m_zone{QTimeZone::LocalTime};
     qint64 m_maxTotal = 0; // records in the fullest bar
     bool m_hasResult = false;
     int m_hoveredBar = -1;

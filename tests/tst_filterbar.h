@@ -13,6 +13,8 @@ private slots:
     void ctrlClickKeepsOnlyOneLevel();
     void relativePeriodEndsNow();
     void customPeriodIsKept();
+    void customPeriodFollowsTheTimeZone();
+    void periodDialogShowsTheTimeZone();
     void zoomsBackThroughEarlierPeriods();
     void choosingAPeriodForgetsZooms();
     void addsSearchTermsAndRemembersThem();

@@ -46,6 +46,9 @@ signals:
     void sourceRequested(qint64 sourceId);
     void searchTermRequested(const QString& term);
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
     StatsMode chosenMode() const;
     void groupingSelected();

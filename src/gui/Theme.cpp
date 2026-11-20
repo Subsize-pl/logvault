@@ -1,6 +1,7 @@
 #include "Theme.h"
 
 #include <QFontDatabase>
+#include <QFontMetrics>
 #include <QGuiApplication>
 #include <QIconEngine>
 #include <QList>
@@ -40,6 +41,9 @@ constexpr float kDarkAlternateShare = 0.05F;
 constexpr float kLightAlternateShare = 0.035F;
 // Placeholder text halfway between the text and the base: clearly a hint, still readable.
 constexpr float kPlaceholderShare = 0.45F;
+
+// Room above and below the text of a table row, in pixels.
+constexpr int kRowPadding = 6;
 
 // The glyphs are drawn in a box of this size, scaled to the icon.
 constexpr qreal kGlyphBox = 16.0;
@@ -216,6 +220,10 @@ QFont monospaceFont() {
         font.setPointSizeF(size);
     }
     return font;
+}
+
+int tableRowHeight(const QFont& font) {
+    return qMax(QFontMetrics(font).height(), QFontMetrics(monospaceFont()).height()) + kRowPadding;
 }
 
 QPalette neutralPalette(const QPalette& system) {

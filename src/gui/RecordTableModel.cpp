@@ -21,6 +21,14 @@ void RecordTableModel::setRecords(QVector<Record> records) {
     endResetModel();
 }
 
+void RecordTableModel::setTimeZone(const QTimeZone& zone) {
+    m_zone = zone;
+    emit headerDataChanged(Qt::Horizontal, TimeColumn, TimeColumn);
+    if (!m_records.isEmpty()) {
+        emit dataChanged(index(0, TimeColumn), index(rowCount() - 1, TimeColumn), {Qt::DisplayRole});
+    }
+}
+
 const Record& RecordTableModel::record(int row) const { return m_records.at(row); }
 
 QString RecordTableModel::rawLines(QList<int> rows) const {
@@ -77,7 +85,8 @@ QVariant RecordTableModel::headerData(int section, Qt::Orientation orientation, 
     }
     switch (section) {
     case TimeColumn:
-        return tr("Time");
+        // The zone is named only when it is not the one the user lives in.
+        return m_zone.timeSpec() == Qt::UTC ? tr("Time (UTC)") : tr("Time");
     case LevelColumn:
         return tr("Level");
     case SourceColumn:
@@ -92,7 +101,7 @@ QVariant RecordTableModel::headerData(int section, Qt::Orientation orientation, 
 QString RecordTableModel::displayText(const Record& record, int column) const {
     switch (column) {
     case TimeColumn:
-        return Format::timestamp(record.ts);
+        return Format::timestamp(record.ts, m_zone);
     case LevelColumn:
         return levelName(record.level);
     case SourceColumn:

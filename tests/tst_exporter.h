@@ -23,6 +23,7 @@ private slots:
 
     void csvQuotesFieldsThatNeedIt();
     void csvUsesTheGivenSeparator();
+    void csvTimesFollowTheTimeZone();
     void jsonLinesParseBackToTheRecords();
     void exportsEveryMatchNewestFirst();
     void cancelLeavesNoFile();
@@ -35,7 +36,8 @@ private:
     bool fill(const QVector<Record>& records) const;
     /// Runs an export to the end; nullopt if it did not start or end in time.
     std::optional<ExportSummary> exportTo(const QString& path, ExportFormat format, QChar separator = u',',
-                                          const SearchRequest& request = {}) const;
+                                          const SearchRequest& request = {},
+                                          const QTimeZone& zone = QTimeZone(QTimeZone::LocalTime)) const;
 
     // A fresh directory per test, so every test starts without files.
     std::unique_ptr<QTemporaryDir> m_dir;

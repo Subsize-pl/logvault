@@ -5,6 +5,7 @@
 #include <QFutureWatcher>
 #include <QObject>
 #include <QString>
+#include <QTimeZone>
 
 #include <atomic>
 
@@ -36,9 +37,11 @@ public:
     ~Exporter() override;
 
     /// Starts writing all records that match request (its maxRows and statistics are ignored) to the file at
-    /// path. separator is the CSV field separator. Returns false while an export is running.
+    /// path. separator is the CSV field separator; CSV times are in the zone, JSON Lines times always in UTC.
+    /// Returns false while an export is running.
     bool start(const QString& databasePath, const SearchRequest& request, const QString& path,
-               ExportFormat format, QChar separator = u',');
+               ExportFormat format, QChar separator = u',',
+               const QTimeZone& zone = QTimeZone(QTimeZone::LocalTime));
 
     /// Asks the running export to stop; the file is not written. Thread-safe.
     void cancel();

@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QCompleter>
 #include <QDateTime>
+#include <QEvent>
 #include <QFormLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -104,7 +105,7 @@ bool FilterBar::restorePreviousPeriod() {
     const PeriodState previous = m_zoomHistory.takeLast();
     m_customFrom = previous.customFrom;
     m_customTo = previous.customTo;
-    m_period->setItemText(m_period->findData(static_cast<int>(Period::Custom)), previous.customText);
+    showCustomPeriod();
     m_periodIndex = previous.index;
     m_period->setCurrentIndex(m_periodIndex);
     emit searchRequested();
@@ -120,6 +121,24 @@ void FilterBar::addSearchTerm(const QString& term) {
 void FilterBar::focusSearchLine() {
     m_searchLine->setFocus(Qt::ShortcutFocusReason);
     m_searchLine->selectAll();
+}
+
+void FilterBar::setTimeZone(const QTimeZone& zone) {
+    m_zone = zone;
+    showCustomPeriod();
+}
+
+void FilterBar::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    // The style sheets hold colors chosen for the old palette: a new theme needs new ones.
+    if (event->type() == QEvent::PaletteChange) {
+        for (std::size_t value = 0; value < m_levelButtons.size(); ++value) {
+            if (m_levelButtons[value] != nullptr) {
+                m_levelButtons[value]->setStyleSheet(
+                    levelButtonStyle(levelFromValue(static_cast<int>(value))));
+            }
+        }
+    }
 }
 
 QWidget* FilterBar::createLevelButtons() {
@@ -155,7 +174,8 @@ void FilterBar::createPeriodBox() {
     m_period->addItem(tr("Last 24 hours"), static_cast<int>(Period::Last24Hours));
     m_period->addItem(tr("Last 7 days"), static_cast<int>(Period::Last7Days));
     m_period->addItem(tr("All time"), static_cast<int>(Period::AllTime));
-    m_period->addItem(tr("Custom range..."), static_cast<int>(Period::Custom));
+    m_period->addItem(QString(), static_cast<int>(Period::Custom));
+    showCustomPeriod();
     m_period->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     m_periodIndex = m_period->findData(static_cast<int>(Period::AllTime));
     m_period->setCurrentIndex(m_periodIndex);
@@ -209,7 +229,7 @@ bool FilterBar::chooseCustomPeriod() {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const auto [from, to] = range(currentPeriod(), now);
     const qint64 end = to > 0 ? to : now;
-    PeriodDialog dialog(from > 0 ? from : end - kHour, end, this);
+    PeriodDialog dialog(from > 0 ? from : end - kHour, end, m_zone, this);
     if (dialog.exec() != QDialog::Accepted) {
         return false;
     }
@@ -221,8 +241,17 @@ void FilterBar::applyCustomPeriod(qint64 from, qint64 to) {
     m_customFrom = from;
     m_customTo = to;
     m_periodIndex = m_period->findData(static_cast<int>(Period::Custom));
-    m_period->setItemText(m_periodIndex, tr("%1 to %2").arg(Format::dateTime(from), Format::dateTime(to)));
+    showCustomPeriod();
     m_period->setCurrentIndex(m_periodIndex);
+}
+
+void FilterBar::showCustomPeriod() {
+    // Until a custom period has been chosen, the item invites the user to choose one.
+    const QString text =
+        m_customFrom < m_customTo
+            ? tr("%1 to %2").arg(Format::dateTime(m_customFrom, m_zone), Format::dateTime(m_customTo, m_zone))
+            : tr("Custom range...");
+    m_period->setItemText(m_period->findData(static_cast<int>(Period::Custom)), text);
 }
 
 std::pair<qint64, qint64> FilterBar::range(Period period, qint64 now) const {
@@ -249,10 +278,7 @@ FilterBar::Period FilterBar::currentPeriod() const {
     return static_cast<Period>(m_period->itemData(m_periodIndex).toInt());
 }
 
-FilterBar::PeriodState FilterBar::periodState() const {
-    return {m_periodIndex, m_customFrom, m_customTo,
-            m_period->itemText(m_period->findData(static_cast<int>(Period::Custom)))};
-}
+FilterBar::PeriodState FilterBar::periodState() const { return {m_periodIndex, m_customFrom, m_customTo}; }
 
 void FilterBar::submitSearch() {
     m_submittedText = m_searchLine->text().trimmed();

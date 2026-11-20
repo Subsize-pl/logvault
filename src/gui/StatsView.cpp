@@ -5,6 +5,7 @@
 #include "Theme.h"
 
 #include <QComboBox>
+#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -57,6 +58,9 @@ StatsView::StatsView(QWidget* parent)
     m_table->setShowGrid(false);
     m_table->setWordWrap(false);
     m_table->verticalHeader()->hide();
+    // The rows of the records table: messages in the monospace font fit, and both tables look alike.
+    m_table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    m_table->verticalHeader()->setDefaultSectionSize(Theme::tableRowHeight(m_table->font()));
     QHeaderView* header = m_table->horizontalHeader();
     header->setSectionResizeMode(ValueColumn, QHeaderView::Stretch);
     header->setSectionResizeMode(CountColumn, QHeaderView::ResizeToContents);
@@ -127,6 +131,16 @@ QString StatsView::shareText(qint64 count, qint64 total) {
         return u"< 0.1 %"_s;
     }
     return QString::number(share, 'f', 1) + u" %"_s;
+}
+
+void StatsView::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    // The level colors and the gray of "(no field)" were chosen for the old palette: rebuild the items.
+    if (event->type() == QEvent::PaletteChange && m_model->rowCount() > 0) {
+        const QVector<StatsRow> rows = m_rows;
+        m_model->removeRows(0, m_model->rowCount());
+        showRows(rows, m_total);
+    }
 }
 
 StatsMode StatsView::chosenMode() const {

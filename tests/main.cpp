@@ -14,6 +14,7 @@
 #include "tst_search.h"
 #include "tst_searchquery.h"
 #include "tst_searchservice.h"
+#include "tst_settings.h"
 #include "tst_storage.h"
 #include "tst_theme.h"
 #include "tst_timeparser.h"
@@ -60,5 +61,6 @@ int main(int argc, char* argv[]) {
     failed += runTests<TestHistogram>(argc, argv);
     failed += runTests<TestPanels>(argc, argv);
     failed += runTests<TestTheme>(argc, argv);
+    failed += runTests<TestSettings>(argc, argv);
     return failed == 0 ? 0 : 1;
 }

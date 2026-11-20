@@ -61,8 +61,10 @@ qint64 floorMod(qint64 value, qint64 divisor) {
     return remainder < 0 ? remainder + divisor : remainder;
 }
 
-// How far local time is ahead of UTC at a moment, in ms.
-qint64 localOffset(qint64 msecs) { return QDateTime::fromMSecsSinceEpoch(msecs).offsetFromUtc() * kSecond; }
+// How far the zone is ahead of UTC at a moment, in ms.
+qint64 offsetAt(qint64 msecs, const QTimeZone& zone) {
+    return QDateTime::fromMSecsSinceEpoch(msecs, zone).offsetFromUtc() * kSecond;
+}
 
 } // namespace
 
@@ -104,6 +106,11 @@ void HistogramWidget::clear() {
     update();
 }
 
+void HistogramWidget::setTimeZone(const QTimeZone& zone) {
+    m_zone = zone;
+    update();
+}
+
 QSize HistogramWidget::sizeHint() const { return {400, 120}; }
 
 QSize HistogramWidget::minimumSizeHint() const { return {160, 80}; }
@@ -138,21 +145,22 @@ qint64 HistogramWidget::labelInterval(qint64 step, qreal barWidth, qreal minSpac
     return step * qMax<qint64>(1, static_cast<qint64>(std::ceil(minSpacing / barWidth)));
 }
 
-QVector<int> HistogramWidget::labelBoundaries(const Histogram& histogram, qint64 interval) {
+QVector<int> HistogramWidget::labelBoundaries(const Histogram& histogram, qint64 interval,
+                                              const QTimeZone& zone) {
     QVector<int> boundaries;
     if (histogram.bars.isEmpty() || histogram.step <= 0 || interval <= 0) {
         return boundaries;
     }
-    const auto collect = [&histogram, interval, &boundaries](bool local) {
+    const auto collect = [&histogram, interval, &zone, &boundaries](bool inZone) {
         for (int boundary = 0; boundary <= histogram.bars.size(); ++boundary) {
             const qint64 time = histogram.start + boundary * histogram.step;
-            if (floorMod(local ? time + localOffset(time) : time, interval) == 0) {
+            if (floorMod(inZone ? time + offsetAt(time, zone) : time, interval) == 0) {
                 boundaries.append(boundary);
             }
         }
     };
-    // Labels at round local times read best (14:00, midnight). Bars of whole days start at UTC midnight,
-    // which is no round local time in most time zones; those are labeled at round UTC times instead.
+    // Labels at round times of the zone read best (14:00, midnight). Bars of whole days start at UTC
+    // midnight, which is no round local time in most time zones; those are labeled at round UTC times.
     collect(true);
     if (boundaries.isEmpty()) {
         collect(false);
@@ -160,8 +168,8 @@ QVector<int> HistogramWidget::labelBoundaries(const Histogram& histogram, qint64
     return boundaries;
 }
 
-QString HistogramWidget::labelText(qint64 msecs, qint64 interval) {
-    const QDateTime time = QDateTime::fromMSecsSinceEpoch(msecs);
+QString HistogramWidget::labelText(qint64 msecs, qint64 interval, const QTimeZone& zone) {
+    const QDateTime time = QDateTime::fromMSecsSinceEpoch(msecs, zone);
     if (interval >= 28 * kDay) {
         return time.toString(u"yyyy-MM-dd"_s);
     }
@@ -172,18 +180,18 @@ QString HistogramWidget::labelText(qint64 msecs, qint64 interval) {
     return time.toString(interval < kMinute ? u"HH:mm:ss"_s : u"HH:mm"_s);
 }
 
-QString HistogramWidget::toolTipText(const Histogram& histogram, int bar) {
+QString HistogramWidget::toolTipText(const Histogram& histogram, int bar, const QTimeZone& zone) {
     if (bar < 0 || bar >= histogram.bars.size()) {
         return {};
     }
     const qint64 from = histogram.start + bar * histogram.step;
     const qint64 to = from + histogram.step;
     // The end of a bar that ends on the day it starts needs no date.
-    const bool sameDay =
-        QDateTime::fromMSecsSinceEpoch(from).date() == QDateTime::fromMSecsSinceEpoch(to).date();
+    const QDateTime start = QDateTime::fromMSecsSinceEpoch(from, zone);
+    const QDateTime finish = QDateTime::fromMSecsSinceEpoch(to, zone);
     const QString end =
-        sameDay ? QDateTime::fromMSecsSinceEpoch(to).toString(u"HH:mm:ss"_s) : Format::dateTime(to);
-    QString text = u"<b>"_s + Format::dateTime(from) + u' ' + kEnDash + u' ' + end + u"</b><br>"_s;
+        start.date() == finish.date() ? finish.toString(u"HH:mm:ss"_s) : Format::dateTime(to, zone);
+    QString text = u"<b>"_s + Format::dateTime(from, zone) + u' ' + kEnDash + u' ' + end + u"</b><br>"_s;
 
     const LevelCounts& counts = histogram.bars[bar];
     const qint64 total = totalOf(counts);
@@ -409,10 +417,10 @@ void HistogramWidget::drawAxes(QPainter& painter, const QRectF& plot) const {
     const qreal minSpacing = metrics.horizontalAdvance(u"0000-00-00"_s) + 2 * kPadding;
     const qint64 interval = labelInterval(m_histogram.step, barWidth, minSpacing);
     qreal lastLabelEnd = -kPadding;
-    for (const int boundary : labelBoundaries(m_histogram, interval)) {
+    for (const int boundary : labelBoundaries(m_histogram, interval, m_zone)) {
         const qreal x = plot.left() + boundary * barWidth;
         painter.drawLine(QPointF(x, plot.bottom()), QPointF(x, plot.bottom() + kTickLength));
-        const QString text = labelText(m_histogram.start + boundary * m_histogram.step, interval);
+        const QString text = labelText(m_histogram.start + boundary * m_histogram.step, interval, m_zone);
         const qreal textWidth = metrics.horizontalAdvance(text);
         // Centered under its tick but kept inside the widget, and never on top of the label before it.
         const qreal left = qBound(0.0, x - textWidth / 2, qMax(0.0, width() - textWidth));
@@ -431,7 +439,7 @@ void HistogramWidget::drawMessage(QPainter& painter, const QRectF& area, const Q
 }
 
 void HistogramWidget::showToolTip(const QPoint& globalPosition, int bar) {
-    QToolTip::showText(globalPosition, toolTipText(m_histogram, bar), this,
+    QToolTip::showText(globalPosition, toolTipText(m_histogram, bar, m_zone), this,
                        barColumn(plotArea(), bar).toAlignedRect());
 }
 

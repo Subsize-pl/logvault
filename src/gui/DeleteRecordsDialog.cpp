@@ -1,11 +1,14 @@
 #include "DeleteRecordsDialog.h"
 
+#include "Format.h"
+
 #include <QComboBox>
 #include <QDate>
 #include <QDateTime>
 #include <QDateTimeEdit>
 #include <QDialogButtonBox>
 #include <QFormLayout>
+#include <QLabel>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QVBoxLayout>
@@ -18,12 +21,15 @@ constexpr int kDefaultAgeDays = 30;
 } // namespace
 
 DeleteRecordsDialog::DeleteRecordsDialog(const QVector<SourceInfo>& sources,
-                                         std::optional<qint64> selectedSourceId, QWidget* parent)
-    : QDialog(parent),
-      m_before(new QDateTimeEdit(QDate::currentDate().addDays(-kDefaultAgeDays).startOfDay())),
-      m_allSources(new QRadioButton(tr("All sources"))), m_oneSource(new QRadioButton(tr("Only:"))),
-      m_source(new QComboBox) {
+                                         std::optional<qint64> selectedSourceId, const QTimeZone& zone,
+                                         QWidget* parent)
+    : QDialog(parent), m_before(new QDateTimeEdit), m_allSources(new QRadioButton(tr("All sources"))),
+      m_oneSource(new QRadioButton(tr("Only:"))), m_source(new QComboBox) {
     setWindowTitle(tr("Delete Records Older Than"));
+    // The zone first: a date and time set afterwards is converted to it.
+    m_before->setTimeZone(zone);
+    const QDate today = QDateTime::currentDateTime(zone).date();
+    m_before->setDateTime(today.addDays(-kDefaultAgeDays).startOfDay(zone));
     m_before->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
     m_before->setCalendarPopup(true);
 
@@ -56,6 +62,7 @@ DeleteRecordsDialog::DeleteRecordsDialog(const QVector<SourceInfo>& sources,
 
     auto* layout = new QVBoxLayout(this);
     layout->addLayout(form);
+    layout->addWidget(new QLabel(tr("Times are in %1.").arg(Format::timeZoneName(zone))));
     layout->addWidget(buttons);
 }
 

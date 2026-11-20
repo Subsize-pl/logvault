@@ -11,12 +11,13 @@
 #include <QPalette>
 #include <QSignalSpy>
 #include <QTest>
+#include <QTimeZone>
 
 using namespace Qt::StringLiterals;
 
 namespace {
 
-// 2026-11-20 14:05:01.123 UTC.
+// 2025-11-20 14:05:01.123 UTC.
 constexpr qint64 kTime = 1'763'647'501'123;
 
 Record makeRecord(qint64 id, Level level, const QString& message, const QString& raw = {}) {
@@ -59,12 +60,34 @@ void TestRecordTableModel::showsRecordTexts() {
                       makeRecord(1, Level::Info, u"Order created"_s)});
 
     QCOMPARE(model.rowCount(), 2);
-    QCOMPARE(cell(model, 0, RecordTableModel::TimeColumn).toString(), Format::timestamp(kTime + 2));
+    QCOMPARE(cell(model, 0, RecordTableModel::TimeColumn).toString(),
+             Format::timestamp(kTime + 2, QTimeZone(QTimeZone::LocalTime)));
     QCOMPARE(cell(model, 0, RecordTableModel::LevelColumn).toString(), u"ERROR"_s);
     QCOMPARE(cell(model, 0, RecordTableModel::SourceColumn).toString(), u"payment"_s);
     QCOMPARE(cell(model, 0, RecordTableModel::MessageColumn).toString(), u"Payment provider timeout"_s);
     QCOMPARE(cell(model, 1, RecordTableModel::LevelColumn).toString(), u"INFO"_s);
     QCOMPARE(model.record(1).id, 1);
+}
+
+void TestRecordTableModel::showsTimesInTheChosenZone() {
+    RecordTableModel model;
+    QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    model.setRecords({makeRecord(2, Level::Info, u"a"_s)});
+    QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+    QSignalSpy header(&model, &QAbstractItemModel::headerDataChanged);
+    model.setTimeZone(QTimeZone(QTimeZone::UTC));
+    QCOMPARE(changed.count(), 1);
+    QCOMPARE(header.count(), 1);
+    QCOMPARE(cell(model, 0, RecordTableModel::TimeColumn).toString(), u"2025-11-20 14:05:01.125"_s);
+    QCOMPARE(model.headerData(RecordTableModel::TimeColumn, Qt::Horizontal).toString(), u"Time (UTC)"_s);
+    model.setTimeZone(QTimeZone(QTimeZone::LocalTime));
+    QCOMPARE(model.headerData(RecordTableModel::TimeColumn, Qt::Horizontal).toString(), u"Time"_s);
+
+    // The helpers the other widgets write times with.
+    QCOMPARE(Format::dateTime(kTime, QTimeZone(QTimeZone::UTC)), u"2025-11-20 14:05:01"_s);
+    QCOMPARE(Format::dateTime(kTime, QTimeZone::fromSecondsAheadOfUtc(-3600)), u"2025-11-20 13:05:01"_s);
+    QCOMPARE(Format::timeZoneName(QTimeZone(QTimeZone::UTC)), u"UTC"_s);
+    QCOMPARE(Format::timeZoneName(QTimeZone(QTimeZone::LocalTime)), u"local time"_s);
 }
 
 void TestRecordTableModel::showsFirstLineOfMessage() {

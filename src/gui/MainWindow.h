@@ -4,6 +4,7 @@
 #include "Exporter.h"
 #include "FileImporter.h"
 #include "SearchService.h"
+#include "Settings.h"
 #include "TcpServer.h"
 
 #include <QMainWindow>
@@ -15,10 +16,14 @@ class HistogramWidget;
 class Ingestor;
 class LiveUpdater;
 class QAction;
+class QActionGroup;
 class QDockWidget;
 class QLabel;
+class QMenu;
 class QMessageBox;
 class QPushButton;
+class QSettings;
+class QSplitter;
 class QStackedWidget;
 class QTabWidget;
 class QTableView;
@@ -38,7 +43,9 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    /// The settings are read from the store, and changes to them, the recent databases and the window
+    /// layout are written to it.
+    explicit MainWindow(QSettings& store, QWidget* parent = nullptr);
     /// Closes the database in the order of DESIGN.md section 3.3.
     ~MainWindow() override;
 
@@ -51,7 +58,7 @@ protected:
 private:
     void createActions();
     void createDocks();
-    QDockWidget* addPanel(const QString& title, QWidget* panel, Qt::DockWidgetArea area);
+    QDockWidget* addPanel(const QString& name, const QString& title, QWidget* panel, Qt::DockWidgetArea area);
     void createMenus();
     void createToolBar();
     void createCentralArea();
@@ -60,19 +67,26 @@ private:
     QTableView* createRecordsTable();
     void createStatusBar();
     void connectWidgets();
+    void restoreLayout();
+    void saveLayout();
 
     void newDatabase();
     void chooseDatabase();
+    void openRecent(const QString& path);
     void openDatabase(const QString& path);
     void switchDatabase(const QString& path);
     void closeDatabase();
+    void setRecent(const QStringList& paths);
+    void showRecent();
     void startIntake(const QString& path);
     void stopIntake();
 
     void toggleReceiver();
     void startReceiver();
     void showReceiverStats(const ReceiverStats& stats);
+    void updateReceiverAction();
     void showReceiverError(const QString& message);
+    void showIntakeError(const QString& message);
 
     void chooseImportFiles();
     void importFiles(const QStringList& paths);
@@ -100,10 +114,21 @@ private:
     void updateLiveIndicator();
     void resumeLive();
 
+    void showSettings(bool receiverFirst);
+    void applySettings(const Settings& settings);
+    void applyTheme();
+    void applyTimeZone();
+    void syncStore();
+    void showAbout();
     void updateActions();
-    void reportError(const QString& message);
+    void warn(const QString& title, const QString& text, const QString& advice);
+    void reportError(const QString& message, const QString& advice = {});
     QString dialogDirectory() const;
     QString databaseFilter() const;
+
+    QSettings& m_store;
+    Settings m_settings;
+    QStringList m_recent; // the recent databases, newest first
 
     QAction* m_newAction = nullptr;
     QAction* m_openAction = nullptr;
@@ -117,6 +142,11 @@ private:
     QAction* m_liveAction = nullptr;
     QAction* m_refreshAction = nullptr;
     QAction* m_findAction = nullptr;
+    QAction* m_settingsAction = nullptr;
+    QAction* m_receiverSettingsAction = nullptr;
+    QActionGroup* m_themeActions = nullptr;
+    QAction* m_aboutAction = nullptr;
+    QMenu* m_recentMenu = nullptr;
 
     QDockWidget* m_sourcesDock = nullptr;
     QDockWidget* m_receiverDock = nullptr;
@@ -127,9 +157,11 @@ private:
 
     QStackedWidget* m_pages = nullptr;
     QWidget* m_placeholderPage = nullptr;
+    QWidget* m_recentList = nullptr; // the recent databases on the placeholder page
     QWidget* m_workspacePage = nullptr;
     FilterBar* m_filterBar = nullptr;
     HistogramWidget* m_histogram = nullptr;
+    QSplitter* m_splitter = nullptr; // the histogram above the tabs
     QTabWidget* m_tabs = nullptr;
     QTableView* m_table = nullptr;
     StatsView* m_statsView = nullptr;
@@ -141,7 +173,9 @@ private:
     TaskStatus* m_exportTask = nullptr;
     QLabel* m_liveStatus = nullptr;
     QMessageBox* m_errorBox = nullptr;
+    QString m_errorAdvice; // what to do about the error the box shows
     int m_errorsSinceShown = 0;
+    bool m_storeErrorShown = false;
 
     SearchService* m_searchService;
     DatabaseJobs* m_jobs;

@@ -6,7 +6,8 @@
 > stores them in a database, and lets the user search, filter and analyze them conveniently.
 > **Size:** about 4–5k lines of product code, tests excluded. This is a guideline, not a limit: reliability and quality come first.
 > **Language:** everything in the repository is in English — UI text, code comments, documentation, commit messages.
-> **Status:** v0.4, scope agreed. Development goes one stage per session (§9); progress is tracked in `docs/PROGRESS.md`.
+> **Status:** v0.4, implemented: all stages of §9 are done (2026-11-20, LogVault 1.0.0); the notes of each stage are in
+> `docs/PROGRESS.md`.
 
 ## 0. Rules for agents
 
@@ -137,6 +138,9 @@ users and permissions, a web UI, an installer, CI/CD.
   back on from the View menu.
 - The central area, top to bottom: the filter bar, the histogram, the "Records" and "Statistics" tabs.
 - While no database is open, the center shows a placeholder with "New database", "Open database" and the recent list.
+- The window remembers its size and position, the docks (`saveState()`), the histogram's height and the table's columns
+  (order, width, hidden ones) in the settings file (F17); a part whose saved state is missing or damaged starts as
+  at first.
 
 ### 2.2. Elements and behavior
 
@@ -157,7 +161,7 @@ users and permissions, a web UI, an installer, CI/CD.
 
 | Menu | Items |
 |---|---|
-| File | New Database… (Ctrl+N), Open Database… (Ctrl+O), Recent ▸, Import Files… (Ctrl+I), Export Results… (Ctrl+E), Exit |
+| File | New Database… (Ctrl+N), Open Database… (Ctrl+O), Recent Databases ▸ (the last 5; a missing file is removed with a message), Import Files… (Ctrl+I), Export Results… (Ctrl+E), Exit |
 | Data | Rename Source…, Delete Source…, Delete Records Older Than… |
 | Receiver | Start / Stop (Ctrl+R), Receiver Settings… |
 | View | Panels ▸ (Sources, Receiver, Record Details), Live Mode (Ctrl+L), Refresh (F5), Theme ▸, Settings… |
@@ -167,18 +171,28 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 
 ### 2.4. Look and feel
 
-- `Fusion` style; theme: system (Qt 6.5+ follows the Windows theme), light or dark — via `QPalette`. The selection and
-  the alternate rows use neutral slate grays instead of the Windows accent color (`Theme::neutralPalette()`), so the
-  level colors read well on every row; placeholder text is gray (the dark Windows palette makes it white).
+- `Fusion` style; theme: system (follows the Windows theme), light or dark (View → Theme or the settings). The theme is
+  asked for with `QStyleHints::setColorScheme()`, so Windows supplies the light or dark `QPalette` and the title bar
+  follows. The selection and the alternate rows use neutral slate grays instead of the Windows accent color
+  (`Theme::neutralPalette()`, applied again after every scheme change), so the level colors read well on every row;
+  placeholder text is gray (the dark Windows palette makes it white). Widgets that keep colors made for one palette
+  (level buttons, statistics, record details) rebuild them on `QEvent::PaletteChange`.
 - Level colors are constants in one place (`gui/Theme`), shared by the table, the level buttons and the histogram:
   TRACE `#8A8F98`, DEBUG `#5B7083`, INFO `#2E7D32`, WARN `#E0A100`, ERROR `#D32F2F`, FATAL `#7B1FA2`, UNKNOWN `#9E9E9E`.
   As text (the table, the record details, the statistics, the level buttons) a level color is lightened or darkened in
   its own hue until it has a contrast of 4.5:1 with the background (`Theme::levelTextColor()`); bars and filled buttons
   use the colors as they are.
 - Monospace font for messages and raw lines; numbers with thousands separators.
+- Times are shown and entered in the display time zone (a setting: local time or UTC): the table, the record details,
+  the histogram labels and tooltips, the custom period and deletion dialogs, the receiver's connections and the CSV
+  export. In UTC the table and the CSV header say `Time (UTC)`, and the dialogs name the zone of their fields. JSON
+  Lines exports always use UTC with `Z`; log lines without a zone are read as local time (§5.4) whatever the setting.
 - Icons: standard `QStyle::standardIcon` where they read in both themes. Import, export, start/stop receiver and live
   are glyphs drawn in the palette's colors (`Theme::glyphIcon()`): the standard ones are dark pixmaps that vanish on a
-  dark toolbar. The application icon is custom.
+  dark toolbar. The application icon is custom: a dark slate tile with three log lines marked green, amber and red
+  (`src/gui/resources/logvault.ico`, all sizes up to 256 px, and `logvault.png`), drawn once with `QPainter`; it is the
+  window icon (`resources.qrc`) and the icon of the .exe (`LogVault.rc`). Help → About shows it with the name, the
+  version from `AppInfo` and the Qt version.
 
 ---
 
@@ -214,6 +228,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `DatabaseJobs` | core | Opens a database file (creating a new one), renames or deletes sources and deletes old records in a worker thread, one job at a time; deletions report their progress. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
+| `Settings` | gui | The F16 settings and the recent databases (F1), read from and written to `QSettings` (an INI file, `%APPDATA%\LogVault\LogVault.ini`); a missing or damaged value reads as its default. |
 | `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `DeleteRecordsDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, which old records to delete, colors, palettes and toolbar glyphs, how numbers and times are written. |
 | `TaskStatus` | gui | A background task in the status bar (import, export, a database job): text, progress, Cancel. |
 | `LiveUpdater` | gui | Decides when live mode refreshes the search (§6.6); no widgets, so it is tested on its own. |
@@ -557,9 +572,9 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
 - Bars are stacked by level using the `Theme` colors, the most severe at the bottom (FATAL, ERROR, … UNKNOWN), so a
   spike of errors stands on the axis; the tooltip shows the interval and per-level counts. The scale is labeled with
   the count of the fullest bar.
-- Time labels sit on round local times (14:00, 14:15) at a spacing that fits the bars, as precise as that spacing
-  (`HH:mm:ss`, `HH:mm`, `MMM d`, `yyyy-MM-dd`); a label at local midnight shows the date. Day bars start at UTC midnight,
-  so their labels sit on round UTC times. The widget paints the histogram of the last `SearchResult` only.
+- Time labels sit on round times of the display zone (14:00, 14:15) at a spacing that fits the bars, as precise as that
+  spacing (`HH:mm:ss`, `HH:mm`, `MMM d`, `yyyy-MM-dd`); a label at midnight shows the date. Day bars start at UTC
+  midnight, so their labels sit on round UTC times. The widget paints the histogram of the last `SearchResult` only.
 - Drag-select → the "Custom range" period from the selection bounds → a new search. The selection snaps to whole bars;
   a click selects nothing (it gives the histogram the focus). Esc restores the previous period: `FilterBar` remembers
   the periods before the last 50 zooms and steps back one per Esc; choosing a period in the combo box forgets them.
@@ -594,8 +609,9 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
   JSON Lines: one object per record.
   - The records come newest first, like the table. `LogStore::visitRecords()` reads them one row at a time in one read
     transaction, after counting them for the progress (`countRecords()`), so any number fits in memory.
-  - CSV: the header `Time,Level,Source,Message,Fields`; the time as the table shows it (local,
-    `yyyy-MM-dd HH:mm:ss.zzz`, which Excel reads as a date); the fields as their JSON text; CRLF after every record.
+  - CSV: the header `Time,Level,Source,Message,Fields` (`Time (UTC)` in UTC); the time as the table shows it (display
+    zone, `yyyy-MM-dd HH:mm:ss.zzz`, which Excel reads as a date); the fields as their JSON text; CRLF after every
+    record.
   - JSON Lines: `{"time":"2026-11-20T11:05:01.123Z","level":"ERROR","source":"…","message":"…","fields":{…}}` — the
     time in UTC (ISO 8601, the form the import reads back), the keys in this order, no BOM, LF after every record.
   - The file is written through `QSaveFile`: a cancelled or failed export leaves no partial file, and a file that was
@@ -625,7 +641,8 @@ logvault/
 │   │               DatabaseJobs, LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
 │                   ImportDialog, DeleteRecordsDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel,
-│                   StatsView, TaskStatus, LiveUpdater, SettingsDialog, Theme, Format, resources.qrc (application icon)
+│                   StatsView, TaskStatus, LiveUpdater, Settings, SettingsDialog, Theme, Format,
+│                   resources/ + resources.qrc + LogVault.rc (application icon)
 ├── tests/          tst_*.cpp (Qt Test)
 ├── examples/       python_client.py
 ├── docs/           DESIGN.md, PROGRESS.md
@@ -690,7 +707,8 @@ class TcpServer : public QObject {
 CMake, Ninja and Qt 6 (`qt6-base`). `C:\msys64\ucrt64\bin` must be first in `PATH` for building and running.
 In CLion: *Settings → Build, Execution, Deployment → Toolchains → + MinGW*, path `C:\msys64\ucrt64`, make it the default.
 
-**CMake.** `find_package(Qt6 6.5 REQUIRED COMPONENTS Core Sql Network Concurrent Widgets Test)`, `qt_standard_project_setup()`.
+**CMake.** `find_package(Qt6 6.8 REQUIRED COMPONENTS Core Sql Network Concurrent Widgets Test)`, `qt_standard_project_setup()`.
+Qt 6.8 is the oldest version with `QStyleHints::setColorScheme()` (the theme setting) and `QDateTimeEdit::setTimeZone()`.
 Targets: `lv_core` and `lv_gui` (static libraries), `LogVault` (`WIN32_EXECUTABLE`, `main.cpp` only), `lv_tests`
 (registered with `add_test`).
 C++20, warnings `-Wall -Wextra -Wpedantic`. `CMakePresets.json` with `debug` and `release` presets
