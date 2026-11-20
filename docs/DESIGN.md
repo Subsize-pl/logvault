@@ -612,6 +612,9 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
   - CSV: the header `Time,Level,Source,Message,Fields` (`Time (UTC)` in UTC); the time as the table shows it (display
     zone, `yyyy-MM-dd HH:mm:ss.zzz`, which Excel reads as a date); the fields as their JSON text; CRLF after every
     record.
+  - CSV injection: a source, message or fields cell that starts with `=`, `+`, `-`, `@`, a tab or a CR gets a leading
+    `'`, so a spreadsheet shows it as text instead of running it as a formula (log text comes from any TCP client).
+    The time and level cells are written by LogVault and are never changed; JSON Lines keeps the text exactly.
   - JSON Lines: `{"time":"2026-11-20T11:05:01.123Z","level":"ERROR","source":"…","message":"…","fields":{…}}` — the
     time in UTC (ISO 8601, the form the import reads back), the keys in this order, no BOM, LF after every record.
   - The file is written through `QSaveFile`: a cancelled or failed export leaves no partial file, and a file that was

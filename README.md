@@ -172,6 +172,6 @@ docs/       DESIGN.md (the design), PROGRESS.md (stages and handoff notes), scre
 - Windows only, and it runs from the build folder with MSYS2 in `PATH` (no installer, as agreed for the coursework).
 - Two line formats: JSON and plain text `<time> <level> <message>`; other formats (syslog, nginx) are out of scope.
 - Times without a zone in the logs are read as the computer's local time.
-- CSV cells are written as they are (RFC 4180): a message that starts with `=`, `+`, `-` or `@` may be read by Excel as
-  a formula.
+- In CSV, a source, message or fields cell that starts with `=`, `+`, `-` or `@` gets a leading `'` so that Excel shows
+  it as text instead of running it as a formula; JSON Lines keeps the text exactly.
 - Statistics by similar messages over a million records take about a second (in the background).

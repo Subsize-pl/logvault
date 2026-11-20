@@ -11,9 +11,9 @@
 #include <memory>
 #include <optional>
 
-/// Checks Exporter on temporary databases: CSV quoting, the byte order mark and the separator, JSON Lines
-/// that parse back to the records, all matches in order, and that a cancelled or failed export leaves no
-/// file behind. Any Qt warning fails a test.
+/// Checks Exporter on temporary databases: CSV quoting, defused formulas, the byte order mark and the
+/// separator, JSON Lines that parse back to the records, all matches in order, and that a cancelled or failed
+/// export leaves no file behind. Any Qt warning fails a test.
 class TestExporter : public QObject {
     Q_OBJECT
 
@@ -24,6 +24,7 @@ private slots:
     void csvQuotesFieldsThatNeedIt();
     void csvUsesTheGivenSeparator();
     void csvTimesFollowTheTimeZone();
+    void csvDefusesFormulas();
     void jsonLinesParseBackToTheRecords();
     void exportsEveryMatchNewestFirst();
     void cancelLeavesNoFile();

@@ -53,14 +53,28 @@ void appendCsvField(QString& out, const QString& text, QChar separator) {
     out += u'"';
 }
 
+// Excel and other spreadsheets run a cell that starts with one of these characters as a formula. Log text
+// comes from any TCP client, so such a cell gets a leading apostrophe, which shows the text as it is
+// (OWASP "CSV injection"). Only CSV is changed: JSON Lines keeps every record exactly.
+QString withoutFormula(const QString& text) {
+    static constexpr std::array<QChar, 6> kFormulaStarts = {u'=', u'+', u'-', u'@', u'\t', u'\r'};
+    if (!text.isEmpty() && std::find(kFormulaStarts.begin(), kFormulaStarts.end(), text.front()) !=
+                               kFormulaStarts.end()) {
+        return u'\'' + text;
+    }
+    return text;
+}
+
 // The time as the records table shows it, in the display zone: Excel reads this form as a date and time.
 QString csvTime(qint64 msecs, const QTimeZone& zone) {
     return QDateTime::fromMSecsSinceEpoch(msecs, zone).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
 }
 
 void appendCsvRecord(QString& out, const Record& record, QChar separator, const QTimeZone& zone) {
-    const std::array<QString, 5> fields = {csvTime(record.ts, zone), levelName(record.level), record.source,
-                                           record.message, record.fields};
+    // The time and the level are written by LogVault itself; the other cells hold text from the logs.
+    const std::array<QString, 5> fields = {csvTime(record.ts, zone), levelName(record.level),
+                                           withoutFormula(record.source), withoutFormula(record.message),
+                                           withoutFormula(record.fields)};
     for (std::size_t i = 0; i < fields.size(); ++i) {
         if (i > 0) {
             out += separator;
