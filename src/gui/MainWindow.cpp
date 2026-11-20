@@ -11,11 +11,13 @@
 #include "ReceiverPanel.h"
 #include "RecordDetailsPanel.h"
 #include "RecordTableModel.h"
+#include "SettingsDialog.h"
 #include "SourcesPanel.h"
 #include "StatsView.h"
 #include "TaskStatus.h"
 #include "Theme.h"
 
+#include <QActionGroup>
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QDateTime>
@@ -39,11 +41,13 @@
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QStyle>
+#include <QStyleHints>
 #include <QTabWidget>
 #include <QTableView>
 #include <QThread>
@@ -51,7 +55,9 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include <array>
 #include <initializer_list>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -97,12 +103,15 @@ MainWindow::MainWindow(QSettings& store, QWidget* parent)
     createCentralArea();
     createStatusBar();
     connectWidgets();
+    applyTheme();
     applyTimeZone();
     showReceiverStats({});
     updateActions();
     updateLiveIndicator();
     // Most of the screen, so the panels and the table have room, but not all of it.
     resize(screen()->availableGeometry().size() * 0.85);
+    // A settings file that cannot be read is reported once the window is up.
+    QMetaObject::invokeMethod(this, &MainWindow::syncStore, Qt::QueuedConnection);
 }
 
 MainWindow::~MainWindow() { closeDatabase(); }
@@ -186,6 +195,28 @@ void MainWindow::createActions() {
     m_findAction->setShortcut(QKeySequence::Find);
     connect(m_findAction, &QAction::triggered, this, [this] { m_filterBar->focusSearchLine(); });
     addAction(m_findAction);
+
+    m_settingsAction = new QAction(tr("&Settings..."), this);
+    connect(m_settingsAction, &QAction::triggered, this, [this] { showSettings(false); });
+    m_receiverSettingsAction = new QAction(tr("Receiver &Settings..."), this);
+    connect(m_receiverSettingsAction, &QAction::triggered, this, [this] { showSettings(true); });
+
+    // View > Theme: the theme of the settings dialog, one click away.
+    m_themeActions = new QActionGroup(this);
+    const std::array<std::pair<Settings::ThemeMode, QString>, 3> themes = {
+        {{Settings::ThemeMode::System, tr("&System")},
+         {Settings::ThemeMode::Light, tr("&Light")},
+         {Settings::ThemeMode::Dark, tr("&Dark")}}};
+    for (const auto& [mode, text] : themes) {
+        QAction* action = m_themeActions->addAction(text);
+        action->setCheckable(true);
+        action->setData(static_cast<int>(mode));
+        connect(action, &QAction::triggered, this, [this, mode] {
+            Settings settings = m_settings;
+            settings.theme = mode;
+            applySettings(settings);
+        });
+    }
 }
 
 void MainWindow::createDocks() {
@@ -222,6 +253,8 @@ void MainWindow::createMenus() {
 
     QMenu* receiver = menuBar()->addMenu(tr("&Receiver"));
     receiver->addAction(m_receiverAction);
+    receiver->addSeparator();
+    receiver->addAction(m_receiverSettingsAction);
 
     QMenu* view = menuBar()->addMenu(tr("&View"));
     QMenu* panels = view->addMenu(tr("&Panels"));
@@ -231,6 +264,9 @@ void MainWindow::createMenus() {
     view->addSeparator();
     view->addAction(m_liveAction);
     view->addAction(m_refreshAction);
+    view->addSeparator();
+    view->addMenu(tr("&Theme"))->addActions(m_themeActions->actions());
+    view->addAction(m_settingsAction);
 }
 
 void MainWindow::createToolBar() {
@@ -977,6 +1013,51 @@ void MainWindow::resumeLive() {
     m_table->scrollToTop();
 }
 
+void MainWindow::showSettings(bool receiverFirst) {
+    SettingsDialog dialog(m_settings, this);
+    if (receiverFirst) {
+        dialog.focusReceiver();
+    }
+    if (dialog.exec() == QDialog::Accepted) {
+        applySettings(dialog.settings());
+    }
+}
+
+void MainWindow::applySettings(const Settings& settings) {
+    const Settings before = std::exchange(m_settings, settings);
+    m_settings.save(m_store);
+    syncStore();
+    if (m_settings.theme != before.theme) {
+        applyTheme();
+    }
+    if (m_settings.timeZone != before.timeZone) {
+        applyTimeZone();
+    }
+    // A running receiver moves to the new address or port at once (clients reconnect); a new default source
+    // needs no restart.
+    if ((m_settings.port != before.port || m_settings.wholeNetwork != before.wholeNetwork) &&
+        m_receiverListening) {
+        startReceiver();
+    } else if (m_settings.defaultSource != before.defaultSource && m_server != nullptr) {
+        TcpServer* server = m_server;
+        const QString source = m_settings.defaultSource;
+        QMetaObject::invokeMethod(server, [server, source] { server->setDefaultSource(source); });
+    }
+    updateReceiverAction();
+    if (m_settings.maxRows != before.maxRows) {
+        search();
+    }
+}
+
+void MainWindow::applyTheme() {
+    // Qt asks Windows for the palette of the scheme; main() adjusts every new palette
+    // (Theme::neutralPalette()).
+    QGuiApplication::styleHints()->setColorScheme(m_settings.colorScheme());
+    for (QAction* action : m_themeActions->actions()) {
+        action->setChecked(static_cast<Settings::ThemeMode>(action->data().toInt()) == m_settings.theme);
+    }
+}
+
 void MainWindow::applyTimeZone() {
     const QTimeZone zone = m_settings.displayZone();
     m_records->setTimeZone(zone);
@@ -984,6 +1065,26 @@ void MainWindow::applyTimeZone() {
     m_histogram->setTimeZone(zone);
     m_filterBar->setTimeZone(zone);
     m_receiverPanel->setTimeZone(zone);
+}
+
+void MainWindow::syncStore() {
+    m_store.sync();
+    const QSettings::Status status = m_store.status();
+    // Said once: whatever keeps the file from being read or written stays until LogVault is closed.
+    if (status == QSettings::NoError || m_storeErrorShown) {
+        return;
+    }
+    m_storeErrorShown = true;
+    const QString file = QDir::toNativeSeparators(m_store.fileName());
+    QMessageBox::warning(
+        this, tr("Settings"),
+        status == QSettings::AccessError
+            ? tr("Cannot save the settings to %1: the file or its folder cannot be written "
+                 "to.\n\nChanged settings apply until LogVault is closed.")
+                  .arg(file)
+            : tr("The settings file %1 is damaged, so LogVault cannot read all of it or save "
+                 "to it.\n\nDelete the file to start with the default settings.")
+                  .arg(file));
 }
 
 void MainWindow::updateActions() {

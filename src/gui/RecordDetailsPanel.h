@@ -31,6 +31,9 @@ signals:
     void levelFilterRequested(Level level, bool exclude);
     void sourceFilterRequested(const QString& source, bool exclude);
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
     enum class Kind { Time, Level, Source, Message, Field };
 

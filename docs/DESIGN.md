@@ -167,9 +167,12 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 
 ### 2.4. Look and feel
 
-- `Fusion` style; theme: system (Qt 6.5+ follows the Windows theme), light or dark — via `QPalette`. The selection and
-  the alternate rows use neutral slate grays instead of the Windows accent color (`Theme::neutralPalette()`), so the
-  level colors read well on every row; placeholder text is gray (the dark Windows palette makes it white).
+- `Fusion` style; theme: system (follows the Windows theme), light or dark (View → Theme or the settings). The theme is
+  asked for with `QStyleHints::setColorScheme()`, so Windows supplies the light or dark `QPalette` and the title bar
+  follows. The selection and the alternate rows use neutral slate grays instead of the Windows accent color
+  (`Theme::neutralPalette()`, applied again after every scheme change), so the level colors read well on every row;
+  placeholder text is gray (the dark Windows palette makes it white). Widgets that keep colors made for one palette
+  (level buttons, statistics, record details) rebuild them on `QEvent::PaletteChange`.
 - Level colors are constants in one place (`gui/Theme`), shared by the table, the level buttons and the histogram:
   TRACE `#8A8F98`, DEBUG `#5B7083`, INFO `#2E7D32`, WARN `#E0A100`, ERROR `#D32F2F`, FATAL `#7B1FA2`, UNKNOWN `#9E9E9E`.
   As text (the table, the record details, the statistics, the level buttons) a level color is lightened or darkened in
@@ -218,6 +221,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `DatabaseJobs` | core | Opens a database file (creating a new one), renames or deletes sources and deletes old records in a worker thread, one job at a time; deletions report their progress. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
+| `Settings` | gui | The F16 settings and the recent databases (F1), read from and written to `QSettings` (an INI file, `%APPDATA%\LogVault\LogVault.ini`); a missing or damaged value reads as its default. |
 | `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `DeleteRecordsDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, which old records to delete, colors, palettes and toolbar glyphs, how numbers and times are written. |
 | `TaskStatus` | gui | A background task in the status bar (import, export, a database job): text, progress, Cancel. |
 | `LiveUpdater` | gui | Decides when live mode refreshes the search (§6.6); no widgets, so it is tested on its own. |
@@ -630,7 +634,8 @@ logvault/
 │   │               DatabaseJobs, LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
 │                   ImportDialog, DeleteRecordsDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel,
-│                   StatsView, TaskStatus, LiveUpdater, SettingsDialog, Theme, Format, resources.qrc (application icon)
+│                   StatsView, TaskStatus, LiveUpdater, Settings, SettingsDialog, Theme, Format,
+│                   resources.qrc (application icon)
 ├── tests/          tst_*.cpp (Qt Test)
 ├── examples/       python_client.py
 ├── docs/           DESIGN.md, PROGRESS.md

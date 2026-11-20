@@ -6,6 +6,7 @@
 #include "Theme.h"
 
 #include <QClipboard>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QHeaderView>
 #include <QJsonDocument>
@@ -93,6 +94,14 @@ void RecordDetailsPanel::clear() {
 void RecordDetailsPanel::setTimeZone(const QTimeZone& zone) {
     m_zone = zone;
     showAgain();
+}
+
+void RecordDetailsPanel::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    // The level's color was made readable on the old background.
+    if (event->type() == QEvent::PaletteChange) {
+        showAgain();
+    }
 }
 
 void RecordDetailsPanel::showAgain() {

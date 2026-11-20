@@ -16,6 +16,7 @@ class HistogramWidget;
 class Ingestor;
 class LiveUpdater;
 class QAction;
+class QActionGroup;
 class QDockWidget;
 class QLabel;
 class QMessageBox;
@@ -105,7 +106,11 @@ private:
     void updateLiveIndicator();
     void resumeLive();
 
+    void showSettings(bool receiverFirst);
+    void applySettings(const Settings& settings);
+    void applyTheme();
     void applyTimeZone();
+    void syncStore();
     void updateActions();
     void reportError(const QString& message);
     QString dialogDirectory() const;
@@ -126,6 +131,9 @@ private:
     QAction* m_liveAction = nullptr;
     QAction* m_refreshAction = nullptr;
     QAction* m_findAction = nullptr;
+    QAction* m_settingsAction = nullptr;
+    QAction* m_receiverSettingsAction = nullptr;
+    QActionGroup* m_themeActions = nullptr;
 
     QDockWidget* m_sourcesDock = nullptr;
     QDockWidget* m_receiverDock = nullptr;
@@ -151,6 +159,7 @@ private:
     QLabel* m_liveStatus = nullptr;
     QMessageBox* m_errorBox = nullptr;
     int m_errorsSinceShown = 0;
+    bool m_storeErrorShown = false;
 
     SearchService* m_searchService;
     DatabaseJobs* m_jobs;

@@ -5,6 +5,7 @@
 #include "Theme.h"
 
 #include <QComboBox>
+#include <QEvent>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -127,6 +128,16 @@ QString StatsView::shareText(qint64 count, qint64 total) {
         return u"< 0.1 %"_s;
     }
     return QString::number(share, 'f', 1) + u" %"_s;
+}
+
+void StatsView::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    // The level colors and the gray of "(no field)" were chosen for the old palette: rebuild the items.
+    if (event->type() == QEvent::PaletteChange && m_model->rowCount() > 0) {
+        const QVector<StatsRow> rows = m_rows;
+        m_model->removeRows(0, m_model->rowCount());
+        showRows(rows, m_total);
+    }
 }
 
 StatsMode StatsView::chosenMode() const {

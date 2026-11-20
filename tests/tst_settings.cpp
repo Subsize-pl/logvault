@@ -1,8 +1,12 @@
 #include "tst_settings.h"
 
 #include "Settings.h"
+#include "SettingsDialog.h"
 
+#include <QDialogButtonBox>
 #include <QDir>
+#include <QLineEdit>
+#include <QPushButton>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
@@ -112,6 +116,33 @@ void TestSettings::derivedValuesFollowTheChoices() {
     QCOMPARE(settings.colorScheme(), Qt::ColorScheme::Light);
     settings.theme = Settings::ThemeMode::Dark;
     QCOMPARE(settings.colorScheme(), Qt::ColorScheme::Dark);
+}
+
+void TestSettings::dialogEditsACopyOfTheSettings() {
+    Settings settings;
+    settings.port = 6001;
+    settings.wholeNetwork = true;
+    settings.autostartReceiver = true;
+    settings.defaultSource = u"web"_s;
+    settings.timeZone = Settings::TimeZoneMode::Utc;
+    settings.theme = Settings::ThemeMode::Dark;
+    settings.maxRows = 2000;
+    SettingsDialog dialog(settings);
+    QVERIFY(dialog.settings() == settings);
+
+    // A blank default source is the default one. (The spin boxes have line edits of their own.)
+    QLineEdit* source = nullptr;
+    for (QLineEdit* edit : dialog.findChildren<QLineEdit*>()) {
+        if (edit->placeholderText() == u"tcp"_s) {
+            source = edit;
+        }
+    }
+    QVERIFY(source != nullptr);
+    source->setText(u"  "_s);
+    QCOMPARE(dialog.settings().defaultSource, u"tcp"_s);
+
+    dialog.findChild<QDialogButtonBox*>()->button(QDialogButtonBox::RestoreDefaults)->click();
+    QVERIFY(dialog.settings() == Settings());
 }
 
 void TestSettings::recentListKeepsTheNewestFirst() {

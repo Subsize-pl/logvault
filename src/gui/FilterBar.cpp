@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QCompleter>
 #include <QDateTime>
+#include <QEvent>
 #include <QFormLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -125,6 +126,19 @@ void FilterBar::focusSearchLine() {
 void FilterBar::setTimeZone(const QTimeZone& zone) {
     m_zone = zone;
     showCustomPeriod();
+}
+
+void FilterBar::changeEvent(QEvent* event) {
+    QWidget::changeEvent(event);
+    // The style sheets hold colors chosen for the old palette: a new theme needs new ones.
+    if (event->type() == QEvent::PaletteChange) {
+        for (std::size_t value = 0; value < m_levelButtons.size(); ++value) {
+            if (m_levelButtons[value] != nullptr) {
+                m_levelButtons[value]->setStyleSheet(
+                    levelButtonStyle(levelFromValue(static_cast<int>(value))));
+            }
+        }
+    }
 }
 
 QWidget* FilterBar::createLevelButtons() {

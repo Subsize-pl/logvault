@@ -55,6 +55,9 @@ signals:
     /// A filter changed or a search was asked for: the search should run again.
     void searchRequested();
 
+protected:
+    void changeEvent(QEvent* event) override;
+
 private:
     enum class Period { Last15Minutes, LastHour, Last24Hours, Last7Days, AllTime, Custom };
 
