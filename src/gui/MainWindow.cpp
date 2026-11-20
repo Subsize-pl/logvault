@@ -67,6 +67,15 @@ namespace {
 constexpr int kSearchingDelayMs = 300;
 constexpr int kMessageTimeoutMs = 5000;
 constexpr int kHistogramHeight = 120;
+constexpr int kMaxHistogramHeight = 2000;
+
+// The window's layout in the settings file (DESIGN.md section 1.2, F17). The version goes up when the
+// docks or the toolbar change, so an old layout is not forced on new panels.
+constexpr auto kGeometryKey = "window/geometry"_L1;
+constexpr auto kStateKey = "window/state"_L1;
+constexpr auto kHistogramHeightKey = "window/histogramHeight"_L1;
+constexpr auto kColumnsKey = "window/recordColumns"_L1;
+constexpr int kLayoutVersion = 1;
 
 constexpr QChar kDot(0x25CF);
 constexpr QChar kEmDash(0x2014);
@@ -108,8 +117,7 @@ MainWindow::MainWindow(QSettings& store, QWidget* parent)
     showReceiverStats({});
     updateActions();
     updateLiveIndicator();
-    // Most of the screen, so the panels and the table have room, but not all of it.
-    resize(screen()->availableGeometry().size() * 0.85);
+    restoreLayout();
     // A settings file that cannot be read is reported once the window is up.
     QMetaObject::invokeMethod(this, &MainWindow::syncStore, Qt::QueuedConnection);
 }
@@ -117,6 +125,7 @@ MainWindow::MainWindow(QSettings& store, QWidget* parent)
 MainWindow::~MainWindow() { closeDatabase(); }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    saveLayout();
     closeDatabase();
     event->accept();
 }
@@ -223,13 +232,16 @@ void MainWindow::createDocks() {
     m_sourcesPanel = new SourcesPanel({m_renameSourceAction, m_deleteSourceAction});
     m_receiverPanel = new ReceiverPanel(m_receiverAction);
     m_detailsPanel = new RecordDetailsPanel;
-    m_sourcesDock = addPanel(tr("Sources"), m_sourcesPanel, Qt::LeftDockWidgetArea);
-    m_receiverDock = addPanel(tr("Receiver"), m_receiverPanel, Qt::LeftDockWidgetArea);
-    m_detailsDock = addPanel(tr("Record Details"), m_detailsPanel, Qt::RightDockWidgetArea);
+    m_sourcesDock = addPanel(u"sources"_s, tr("Sources"), m_sourcesPanel, Qt::LeftDockWidgetArea);
+    m_receiverDock = addPanel(u"receiver"_s, tr("Receiver"), m_receiverPanel, Qt::LeftDockWidgetArea);
+    m_detailsDock = addPanel(u"details"_s, tr("Record Details"), m_detailsPanel, Qt::RightDockWidgetArea);
 }
 
-QDockWidget* MainWindow::addPanel(const QString& title, QWidget* panel, Qt::DockWidgetArea area) {
+QDockWidget* MainWindow::addPanel(const QString& name, const QString& title, QWidget* panel,
+                                  Qt::DockWidgetArea area) {
     auto* dock = new QDockWidget(title, this);
+    // saveState() finds the docks by their object names.
+    dock->setObjectName(name);
     dock->setWidget(panel);
     addDockWidget(area, dock);
     return dock;
@@ -271,6 +283,7 @@ void MainWindow::createMenus() {
 
 void MainWindow::createToolBar() {
     QToolBar* toolBar = addToolBar(tr("Main"));
+    toolBar->setObjectName(u"toolBar"_s);
     toolBar->setMovable(false);
     toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toolBar->addAction(m_openAction);
@@ -335,19 +348,19 @@ QWidget* MainWindow::createWorkspace() {
     m_tabs->addTab(m_table, tr("Records"));
     m_tabs->addTab(m_statsView, tr("Statistics"));
 
-    auto* splitter = new QSplitter(Qt::Vertical);
-    splitter->addWidget(m_histogram);
-    splitter->addWidget(m_tabs);
-    splitter->setStretchFactor(1, 1);
-    splitter->setChildrenCollapsible(false);
+    m_splitter = new QSplitter(Qt::Vertical);
+    m_splitter->addWidget(m_histogram);
+    m_splitter->addWidget(m_tabs);
+    m_splitter->setStretchFactor(1, 1);
+    m_splitter->setChildrenCollapsible(false);
     // The histogram starts at its height and the tabs, the only part that stretches, take the rest. Left to
     // itself, the splitter would size the histogram from a widget that has not been laid out yet.
-    splitter->setSizes({kHistogramHeight, kHistogramHeight});
+    m_splitter->setSizes({kHistogramHeight, kHistogramHeight});
 
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->addWidget(m_filterBar);
-    layout->addWidget(splitter, 1);
+    layout->addWidget(m_splitter, 1);
     return page;
 }
 
@@ -481,6 +494,41 @@ void MainWindow::connectWidgets() {
         updateLivePause();
     });
     connect(m_table->verticalScrollBar(), &QScrollBar::valueChanged, this, &MainWindow::updateLivePause);
+}
+
+void MainWindow::restoreLayout() {
+    // Without a saved layout: most of the screen, so the panels and the table have room, but not all of it.
+    if (!restoreGeometry(m_store.value(kGeometryKey).toByteArray())) {
+        resize(screen()->availableGeometry().size() * 0.85);
+    }
+    // Each part keeps its default when its saved state is missing or does not fit.
+    restoreState(m_store.value(kStateKey).toByteArray(), kLayoutVersion);
+    // The height alone, set as at the start: the splitter's own state would be scaled to a size the window
+    // does not have yet.
+    bool ok = false;
+    const int height = m_store.value(kHistogramHeightKey).toInt(&ok);
+    if (ok && height >= m_histogram->minimumSizeHint().height() && height <= kMaxHistogramHeight) {
+        m_splitter->setSizes({height, height});
+    }
+    QHeaderView* columns = m_table->horizontalHeader();
+    if (columns->restoreState(m_store.value(kColumnsKey).toByteArray()) &&
+        columns->hiddenSectionCount() == columns->count()) {
+        // A table without columns has no header to bring them back with.
+        for (int column = 0; column < columns->count(); ++column) {
+            columns->showSection(column);
+        }
+    }
+}
+
+void MainWindow::saveLayout() {
+    m_store.setValue(kGeometryKey, saveGeometry());
+    m_store.setValue(kStateKey, saveState(kLayoutVersion));
+    // A splitter that was never shown has no height of its own.
+    if (m_splitter->isVisible()) {
+        m_store.setValue(kHistogramHeightKey, m_splitter->sizes().value(0));
+    }
+    m_store.setValue(kColumnsKey, m_table->horizontalHeader()->saveState());
+    syncStore();
 }
 
 void MainWindow::newDatabase() {

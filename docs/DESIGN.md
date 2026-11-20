@@ -137,6 +137,9 @@ users and permissions, a web UI, an installer, CI/CD.
   back on from the View menu.
 - The central area, top to bottom: the filter bar, the histogram, the "Records" and "Statistics" tabs.
 - While no database is open, the center shows a placeholder with "New database", "Open database" and the recent list.
+- The window remembers its size and position, the docks (`saveState()`), the histogram's height and the table's columns
+  (order, width, hidden ones) in the settings file (F17); a part whose saved state is missing or damaged starts as
+  at first.
 
 ### 2.2. Elements and behavior
 

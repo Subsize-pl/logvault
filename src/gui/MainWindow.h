@@ -22,6 +22,7 @@ class QLabel;
 class QMessageBox;
 class QPushButton;
 class QSettings;
+class QSplitter;
 class QStackedWidget;
 class QTabWidget;
 class QTableView;
@@ -56,7 +57,7 @@ protected:
 private:
     void createActions();
     void createDocks();
-    QDockWidget* addPanel(const QString& title, QWidget* panel, Qt::DockWidgetArea area);
+    QDockWidget* addPanel(const QString& name, const QString& title, QWidget* panel, Qt::DockWidgetArea area);
     void createMenus();
     void createToolBar();
     void createCentralArea();
@@ -65,6 +66,8 @@ private:
     QTableView* createRecordsTable();
     void createStatusBar();
     void connectWidgets();
+    void restoreLayout();
+    void saveLayout();
 
     void newDatabase();
     void chooseDatabase();
@@ -147,6 +150,7 @@ private:
     QWidget* m_workspacePage = nullptr;
     FilterBar* m_filterBar = nullptr;
     HistogramWidget* m_histogram = nullptr;
+    QSplitter* m_splitter = nullptr; // the histogram above the tabs
     QTabWidget* m_tabs = nullptr;
     QTableView* m_table = nullptr;
     StatsView* m_statsView = nullptr;
