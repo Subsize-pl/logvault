@@ -571,6 +571,10 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
 - Double-click: level → keep only that level; source → select that source; field → add `field:value` to the search line
   (`-field:*` for the "(no field)" row); similar message → add the longest `#`-free part of the pattern, in quotes, to
   the search line.
+- The statistics are asked for (`statsMode`) only while the tab is shown; showing it starts a search. Grouping by a
+  field asks for nothing until the name is valid, so a half-typed name never fails the search. The summary says how
+  many groups of how many matches (or "the 100 largest groups"). While the groups stay the same (live mode), only the
+  numbers change, so the selection and the scroll position stay.
 
 ### 6.6. Live mode
 

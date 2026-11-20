@@ -11,6 +11,7 @@
 #include "RecordDetailsPanel.h"
 #include "RecordTableModel.h"
 #include "SourcesPanel.h"
+#include "StatsView.h"
 #include "Theme.h"
 
 #include <QClipboard>
@@ -284,9 +285,10 @@ QWidget* MainWindow::createWorkspace() {
     m_histogram = new HistogramWidget;
 
     m_table = createRecordsTable();
+    m_statsView = new StatsView;
     m_tabs = new QTabWidget;
     m_tabs->addTab(m_table, tr("Records"));
-    m_tabs->addTab(new QWidget, tr("Statistics"));
+    m_tabs->addTab(m_statsView, tr("Statistics"));
 
     auto* splitter = new QSplitter(Qt::Vertical);
     splitter->addWidget(m_histogram);
@@ -399,6 +401,17 @@ void MainWindow::connectWidgets() {
     connect(m_histogram, &HistogramWidget::periodSelected, m_filterBar, &FilterBar::zoomToPeriod);
     connect(m_histogram, &HistogramWidget::previousPeriodRequested, m_filterBar,
             &FilterBar::restorePreviousPeriod);
+
+    // Statistics are computed only while their tab is shown (DESIGN.md section 6.5), so showing it searches.
+    connect(m_tabs, &QTabWidget::currentChanged, this, [this] {
+        if (m_tabs->currentWidget() == m_statsView) {
+            search();
+        }
+    });
+    connect(m_statsView, &StatsView::groupingChanged, this, &MainWindow::search);
+    connect(m_statsView, &StatsView::levelRequested, m_filterBar, &FilterBar::showOnlyLevel);
+    connect(m_statsView, &StatsView::sourceRequested, m_sourcesPanel, &SourcesPanel::showOnlySourceId);
+    connect(m_statsView, &StatsView::searchTermRequested, m_filterBar, &FilterBar::addSearchTerm);
     connect(m_sourcesPanel, &SourcesPanel::selectionChanged, this, [this] {
         updateActions();
         search();
@@ -523,6 +536,7 @@ void MainWindow::closeDatabase() {
     m_live->searchFinished();
     m_records->setRecords({});
     m_histogram->clear();
+    m_statsView->clear();
     m_sourcesPanel->setSources({});
     m_detailsPanel->clear();
     showReceiverStats({});
@@ -787,6 +801,7 @@ void MainWindow::search() {
     m_filterBar->fillRequest(request, QDateTime::currentMSecsSinceEpoch());
     request.sourceIds = m_sourcesPanel->selectedIds();
     request.maxRows = kMaxRows;
+    m_statsView->prepareRequest(request, m_tabs->currentWidget() == m_statsView);
     // SearchService delivers the result of the latest search only, so an earlier one never overwrites it.
     m_searchService->search(request);
     m_live->searchStarted();
@@ -803,6 +818,7 @@ void MainWindow::showSearchResult(const SearchResult& result) {
     m_records->setRecords(result.rows);
     m_table->scrollToTop();
     m_histogram->setHistogram(result.histogram);
+    m_statsView->showResult(result);
     m_sourcesPanel->setSources(result.sources);
     m_tabs->setTabText(m_tabs->indexOf(m_table), tr("Records (%1)").arg(Format::count(result.rows.size())));
 

@@ -86,10 +86,18 @@ std::optional<SourceInfo> SourcesPanel::selectedSource() const {
 void SourcesPanel::showOnlySource(const QString& name) {
     for (const SourceInfo& source : m_sources) {
         if (source.name == name) {
-            selectIds({source.id});
-            notifyIfChanged();
+            showOnlySourceId(source.id);
             return;
         }
+    }
+}
+
+void SourcesPanel::showOnlySourceId(qint64 id) {
+    const bool listed = std::any_of(m_sources.begin(), m_sources.end(),
+                                    [id](const SourceInfo& source) { return source.id == id; });
+    if (listed) {
+        selectIds({id});
+        notifyIfChanged();
     }
 }
 

@@ -36,6 +36,8 @@ public:
     /// Selects only the named source, or takes it out of the sources shown. Emits selectionChanged().
     void showOnlySource(const QString& name);
     void hideSource(const QString& name);
+    /// Selects only the source with this id, if it is listed. Emits selectionChanged().
+    void showOnlySourceId(qint64 id);
 
 signals:
     /// The selected sources changed, so the search should run again.

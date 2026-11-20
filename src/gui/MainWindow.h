@@ -28,6 +28,7 @@ class RecordDetailsPanel;
 class RecordTableModel;
 class ReceiverPanel;
 class SourcesPanel;
+class StatsView;
 
 /// The application's main window (DESIGN.md section 2): menus, panels, the filters and the records table.
 /// It wires the widgets to the core objects and owns the threads of the open database; the work itself is
@@ -123,6 +124,7 @@ private:
     HistogramWidget* m_histogram = nullptr;
     QTabWidget* m_tabs = nullptr;
     QTableView* m_table = nullptr;
+    StatsView* m_statsView = nullptr;
     RecordTableModel* m_records;
 
     QLabel* m_searchStatus = nullptr;
