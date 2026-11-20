@@ -29,7 +29,7 @@ qt_add_executable(lv_tests
     tst_timeparser.h
 )
 
-target_link_libraries(lv_tests PRIVATE lv_core Qt6::Test)
+target_link_libraries(lv_tests PRIVATE lv_core lv_gui Qt6::Test)
 # The Python client check runs examples/python_client.py from the source tree.
 target_compile_definitions(lv_tests PRIVATE LV_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 lv_enable_warnings(lv_tests)

@@ -185,7 +185,8 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `gui` | `src/gui` | Main window, panels, dialogs, table models, histogram. | Widgets |
 
 `core` is built as the static library `lv_core`, used by the application and the tests. `core` must never include
-`QtWidgets`: this keeps the logic testable without a window and the UI layer thin.
+`QtWidgets`: this keeps the logic testable without a window and the UI layer thin. `gui` is the static library
+`lv_gui` (everything but `main.cpp`), so the tests can check its models as well.
 
 ### 3.2. Classes
 
@@ -655,7 +656,8 @@ CMake, Ninja and Qt 6 (`qt6-base`). `C:\msys64\ucrt64\bin` must be first in `PAT
 In CLion: *Settings → Build, Execution, Deployment → Toolchains → + MinGW*, path `C:\msys64\ucrt64`, make it the default.
 
 **CMake.** `find_package(Qt6 6.5 REQUIRED COMPONENTS Core Sql Network Concurrent Widgets Test)`, `qt_standard_project_setup()`.
-Targets: `lv_core` (static library), `LogVault` (`WIN32_EXECUTABLE`), `lv_tests` (registered with `add_test`).
+Targets: `lv_core` and `lv_gui` (static libraries), `LogVault` (`WIN32_EXECUTABLE`, `main.cpp` only), `lv_tests`
+(registered with `add_test`).
 C++20, warnings `-Wall -Wextra -Wpedantic`. `CMakePresets.json` with `debug` and `release` presets
 (Ninja, `binaryDir` = `build/<preset>`), so the build is:
 

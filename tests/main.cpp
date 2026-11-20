@@ -11,7 +11,7 @@
 #include "tst_storage.h"
 #include "tst_timeparser.h"
 
-#include <QCoreApplication>
+#include <QApplication>
 #include <QTest>
 
 namespace {
@@ -30,7 +30,8 @@ int main(int argc, char* argv[]) {
     // Without a console window (ctest pipes, IDE runners) Qt on Windows sends test output and warnings to
     // the debugger only. Force stdout/stderr so the results are always visible; must precede any output.
     qputenv("QT_FORCE_STDERR_LOGGING", "1");
-    QCoreApplication app(argc, argv);
+    // The models and widgets of lv_gui need a QApplication; ctest runs it on the offscreen platform.
+    QApplication app(argc, argv);
 
     int failed = 0;
     failed += runTests<TestEnvironment>(argc, argv);
