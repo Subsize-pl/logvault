@@ -28,6 +28,7 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QGridLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -53,6 +54,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <array>
@@ -68,6 +70,8 @@ constexpr int kSearchingDelayMs = 300;
 constexpr int kMessageTimeoutMs = 5000;
 constexpr int kHistogramHeight = 120;
 constexpr int kMaxHistogramHeight = 2000;
+// The widest a recent database's folder is shown on the placeholder page, in pixels.
+constexpr int kRecentFolderWidth = 420;
 
 // The window's layout in the settings file (DESIGN.md section 1.2, F17). The version goes up when the
 // docks or the toolbar change, so an old layout is not forced on new panels.
@@ -100,8 +104,9 @@ QStringList localFiles(const QMimeData* data) {
 
 MainWindow::MainWindow(QSettings& store, QWidget* parent)
     : QMainWindow(parent), m_store(store), m_settings(Settings::load(store)),
-      m_records(new RecordTableModel(this)), m_searchService(new SearchService(this)),
-      m_jobs(new DatabaseJobs(this)), m_importer(new FileImporter(this)), m_exporter(new Exporter(this)),
+      m_recent(RecentDatabases::load(store)), m_records(new RecordTableModel(this)),
+      m_searchService(new SearchService(this)), m_jobs(new DatabaseJobs(this)),
+      m_importer(new FileImporter(this)), m_exporter(new Exporter(this)),
       m_live(new LiveUpdater(LiveUpdater::kDefaultIntervalMs, this)), m_searchingTimer(new QTimer(this)) {
     setWindowTitle(AppInfo::name());
     setAcceptDrops(true);
@@ -112,6 +117,7 @@ MainWindow::MainWindow(QSettings& store, QWidget* parent)
     createCentralArea();
     createStatusBar();
     connectWidgets();
+    showRecent();
     applyTheme();
     applyTimeZone();
     showReceiverStats({});
@@ -251,6 +257,7 @@ void MainWindow::createMenus() {
     QMenu* file = menuBar()->addMenu(tr("&File"));
     file->addAction(m_newAction);
     file->addAction(m_openAction);
+    m_recentMenu = file->addMenu(tr("&Recent Databases"));
     file->addSeparator();
     file->addAction(m_importAction);
     file->addAction(m_exportAction);
@@ -327,6 +334,12 @@ QWidget* MainWindow::createPlaceholder() {
     buttons->addWidget(openButton);
     buttons->addStretch();
 
+    // Filled by showRecent().
+    m_recentList = new QWidget;
+    auto* recentGrid = new QGridLayout(m_recentList);
+    recentGrid->setContentsMargins(0, 0, 0, 0);
+    recentGrid->setColumnStretch(2, 1);
+
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
     layout->addStretch();
@@ -334,6 +347,8 @@ QWidget* MainWindow::createPlaceholder() {
     layout->addWidget(hint);
     layout->addSpacing(16);
     layout->addLayout(buttons);
+    layout->addSpacing(24);
+    layout->addWidget(m_recentList, 0, Qt::AlignHCenter);
     layout->addStretch();
     return page;
 }
@@ -560,6 +575,20 @@ void MainWindow::chooseDatabase() {
     }
 }
 
+void MainWindow::openRecent(const QString& path) {
+    // Opening a missing file would create an empty database in its place.
+    if (!QFileInfo(path).isFile()) {
+        QMessageBox::warning(this, tr("Open Database"),
+                             tr("%1 no longer exists, so it is removed from the recent databases.\n\nIf the "
+                                "file was moved or renamed, open it with File > Open Database.")
+                                 .arg(QDir::toNativeSeparators(path)));
+        // After the message: the list's buttons are replaced, and the one clicked must outlive its click.
+        setRecent(RecentDatabases::removed(m_recent, path));
+        return;
+    }
+    openDatabase(path);
+}
+
 void MainWindow::openDatabase(const QString& path) {
     if (!m_databasePath.isEmpty() && QFileInfo(path) == QFileInfo(m_databasePath)) {
         return;
@@ -574,6 +603,7 @@ void MainWindow::switchDatabase(const QString& path) {
     const bool receiverWasOn = m_receiverListening;
     closeDatabase();
     m_databasePath = path;
+    setRecent(RecentDatabases::added(m_recent, path));
     m_searchService->setDatabasePath(path);
     startIntake(path);
     setWindowTitle(AppInfo::name() + u' ' + kEmDash + u' ' + QFileInfo(path).fileName());
@@ -634,6 +664,66 @@ void MainWindow::closeDatabase() {
     updateActions();
     updateLiveIndicator();
     QGuiApplication::restoreOverrideCursor();
+}
+
+void MainWindow::setRecent(const QStringList& paths) {
+    m_recent = paths;
+    RecentDatabases::save(m_store, m_recent);
+    syncStore();
+    showRecent();
+}
+
+void MainWindow::showRecent() {
+    m_recentMenu->clear();
+    for (qsizetype i = 0; i < m_recent.size(); ++i) {
+        const QString path = m_recent[i];
+        // An ampersand in a path would underline the next letter instead of showing.
+        QString text = QDir::toNativeSeparators(path);
+        text.replace(u'&', u"&&"_s);
+        QAction* action = m_recentMenu->addAction(u"&%1 %2"_s.arg(i + 1).arg(text));
+        connect(action, &QAction::triggered, this, [this, path] { openRecent(path); });
+    }
+    if (m_recent.isEmpty()) {
+        m_recentMenu->addAction(tr("No recent databases"))->setEnabled(false);
+    }
+
+    // The same list on the placeholder page. A button may be the one being clicked, so it is deleted later.
+    auto* list = qobject_cast<QGridLayout*>(m_recentList->layout());
+    while (QLayoutItem* item = list->takeAt(0)) {
+        if (item->widget() != nullptr) {
+            item->widget()->deleteLater();
+        }
+        delete item;
+    }
+    if (m_recent.isEmpty()) {
+        return;
+    }
+    auto* heading = new QLabel(tr("Recent databases"));
+    QFont bold = heading->font();
+    bold.setBold(true);
+    heading->setFont(bold);
+    list->addWidget(heading, 0, 0, 1, 2);
+    for (int row = 1; const QString& path : m_recent) {
+        // A row: the file name to click, and its folder in gray, shortened in the middle if long.
+        const QFileInfo file(path);
+        QString name = file.fileName();
+        name.replace(u'&', u"&&"_s);
+        auto* button = new QToolButton;
+        button->setAutoRaise(true);
+        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        button->setIcon(m_openAction->icon());
+        button->setText(name);
+        button->setToolTip(QDir::toNativeSeparators(path));
+        button->setCursor(Qt::PointingHandCursor);
+        connect(button, &QToolButton::clicked, this, [this, path] { openRecent(path); });
+        auto* folder = new QLabel;
+        folder->setForegroundRole(QPalette::PlaceholderText);
+        folder->setText(folder->fontMetrics().elidedText(QDir::toNativeSeparators(file.absolutePath()),
+                                                         Qt::ElideMiddle, kRecentFolderWidth));
+        list->addWidget(button, row, 0);
+        list->addWidget(folder, row, 1);
+        ++row;
+    }
 }
 
 void MainWindow::startIntake(const QString& path) {
@@ -1141,6 +1231,8 @@ void MainWindow::updateActions() {
     const bool sourceSelected = open && m_sourcesPanel->selectedSource().has_value();
     m_newAction->setEnabled(!jobRunning);
     m_openAction->setEnabled(!jobRunning);
+    m_recentMenu->setEnabled(!jobRunning);
+    m_recentList->setEnabled(!jobRunning);
     m_importAction->setEnabled(canImport());
     m_renameSourceAction->setEnabled(sourceSelected && !jobRunning);
     m_deleteSourceAction->setEnabled(sourceSelected && !jobRunning);

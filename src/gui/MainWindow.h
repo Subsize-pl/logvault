@@ -19,6 +19,7 @@ class QAction;
 class QActionGroup;
 class QDockWidget;
 class QLabel;
+class QMenu;
 class QMessageBox;
 class QPushButton;
 class QSettings;
@@ -71,9 +72,12 @@ private:
 
     void newDatabase();
     void chooseDatabase();
+    void openRecent(const QString& path);
     void openDatabase(const QString& path);
     void switchDatabase(const QString& path);
     void closeDatabase();
+    void setRecent(const QStringList& paths);
+    void showRecent();
     void startIntake(const QString& path);
     void stopIntake();
 
@@ -121,6 +125,7 @@ private:
 
     QSettings& m_store;
     Settings m_settings;
+    QStringList m_recent; // the recent databases, newest first
 
     QAction* m_newAction = nullptr;
     QAction* m_openAction = nullptr;
@@ -137,6 +142,7 @@ private:
     QAction* m_settingsAction = nullptr;
     QAction* m_receiverSettingsAction = nullptr;
     QActionGroup* m_themeActions = nullptr;
+    QMenu* m_recentMenu = nullptr;
 
     QDockWidget* m_sourcesDock = nullptr;
     QDockWidget* m_receiverDock = nullptr;
@@ -147,6 +153,7 @@ private:
 
     QStackedWidget* m_pages = nullptr;
     QWidget* m_placeholderPage = nullptr;
+    QWidget* m_recentList = nullptr; // the recent databases on the placeholder page
     QWidget* m_workspacePage = nullptr;
     FilterBar* m_filterBar = nullptr;
     HistogramWidget* m_histogram = nullptr;

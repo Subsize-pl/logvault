@@ -160,7 +160,7 @@ users and permissions, a web UI, an installer, CI/CD.
 
 | Menu | Items |
 |---|---|
-| File | New Database… (Ctrl+N), Open Database… (Ctrl+O), Recent ▸, Import Files… (Ctrl+I), Export Results… (Ctrl+E), Exit |
+| File | New Database… (Ctrl+N), Open Database… (Ctrl+O), Recent Databases ▸ (the last 5; a missing file is removed with a message), Import Files… (Ctrl+I), Export Results… (Ctrl+E), Exit |
 | Data | Rename Source…, Delete Source…, Delete Records Older Than… |
 | Receiver | Start / Stop (Ctrl+R), Receiver Settings… |
 | View | Panels ▸ (Sources, Receiver, Record Details), Live Mode (Ctrl+L), Refresh (F5), Theme ▸, Settings… |
