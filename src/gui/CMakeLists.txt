@@ -2,6 +2,8 @@
 qt_add_library(lv_gui STATIC
     Format.cpp
     Format.h
+    LiveUpdater.cpp
+    LiveUpdater.h
     MainWindow.cpp
     MainWindow.h
     RecordTableModel.cpp

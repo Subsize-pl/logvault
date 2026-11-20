@@ -4,6 +4,7 @@
 #include "tst_intake.h"
 #include "tst_lineparser.h"
 #include "tst_linesplitter.h"
+#include "tst_liveupdater.h"
 #include "tst_pythonclient.h"
 #include "tst_recordtablemodel.h"
 #include "tst_search.h"
@@ -48,5 +49,6 @@ int main(int argc, char* argv[]) {
     failed += runTests<TestSearchService>(argc, argv);
     failed += runTests<TestDatabaseJobs>(argc, argv);
     failed += runTests<TestRecordTableModel>(argc, argv);
+    failed += runTests<TestLiveUpdater>(argc, argv);
     return failed == 0 ? 0 : 1;
 }

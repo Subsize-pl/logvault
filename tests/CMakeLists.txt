@@ -13,6 +13,8 @@ qt_add_executable(lv_tests
     tst_intake.h
     tst_lineparser.cpp
     tst_lineparser.h
+    tst_liveupdater.cpp
+    tst_liveupdater.h
     tst_linesplitter.cpp
     tst_linesplitter.h
     tst_pythonclient.cpp
