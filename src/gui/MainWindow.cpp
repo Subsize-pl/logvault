@@ -758,6 +758,21 @@ void MainWindow::showJobResult(const DatabaseJobResult& result) {
                                      kMessageTimeoutMs);
         }
         break;
+    case DatabaseJobResult::Kind::DeleteOldRecords:
+        search();
+        if (!result.error.isEmpty()) {
+            QMessageBox::warning(
+                this, tr("Delete Old Records"),
+                tr("%1\n\nRecords deleted before the error stay deleted.").arg(result.error));
+        } else if (result.cancelled) {
+            statusBar()->showMessage(tr("Deleting old records was cancelled; %1 records were deleted.")
+                                         .arg(Format::count(result.deleted)),
+                                     kMessageTimeoutMs);
+        } else {
+            statusBar()->showMessage(tr("Deleted %1 old records.").arg(Format::count(result.deleted)),
+                                     kMessageTimeoutMs);
+        }
+        break;
     }
 }
 

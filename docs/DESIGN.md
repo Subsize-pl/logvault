@@ -204,7 +204,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `TcpServer` | core | Listens on a port, manages connections, splits the byte stream into lines. |
 | `FileImporter` | core | Imports files in a worker thread: progress, cancel, summary. |
 | `Exporter` | core | Exports results to CSV / JSON Lines in a worker thread. |
-| `DatabaseJobs` | core | Opens a database file (creating a new one) and renames or deletes sources in a worker thread, one job at a time. |
+| `DatabaseJobs` | core | Opens a database file (creating a new one), renames or deletes sources and deletes old records in a worker thread, one job at a time; deletions report their progress. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
 | `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, colors and palettes, how numbers and times are written. |
@@ -574,7 +574,9 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
   that is what Excel expects when a CSV file is opened by double-click. Columns: time, level, source, message, fields.
   JSON Lines: one object per record.
 - **Deletion** (a source or records older than a date) — after confirmation, in the background, in chunks of 10,000
-  records, so the database is never locked for long.
+  records, so the database is never locked for long. The matching records are counted first, so the status bar shows
+  the progress after every chunk; Cancel stops after the current chunk, and the chunks deleted before stay deleted.
+  Sources emptied by deleting old records stay.
 
 ---
 
