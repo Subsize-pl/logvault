@@ -3,18 +3,28 @@ qt_add_executable(lv_tests
     IntakeRig.h
     StoredRecords.h
     main.cpp
+    tst_databasejobs.cpp
+    tst_databasejobs.h
     tst_environment.cpp
     tst_environment.h
     tst_fileimporter.cpp
+    tst_filterbar.cpp
+    tst_filterbar.h
     tst_fileimporter.h
     tst_intake.cpp
     tst_intake.h
     tst_lineparser.cpp
     tst_lineparser.h
+    tst_liveupdater.cpp
+    tst_liveupdater.h
     tst_linesplitter.cpp
     tst_linesplitter.h
+    tst_panels.cpp
+    tst_panels.h
     tst_pythonclient.cpp
     tst_pythonclient.h
+    tst_recordtablemodel.cpp
+    tst_recordtablemodel.h
     tst_search.cpp
     tst_search.h
     tst_searchquery.cpp
@@ -27,7 +37,7 @@ qt_add_executable(lv_tests
     tst_timeparser.h
 )
 
-target_link_libraries(lv_tests PRIVATE lv_core Qt6::Test)
+target_link_libraries(lv_tests PRIVATE lv_core lv_gui Qt6::Test)
 # The Python client check runs examples/python_client.py from the source tree.
 target_compile_definitions(lv_tests PRIVATE LV_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 lv_enable_warnings(lv_tests)

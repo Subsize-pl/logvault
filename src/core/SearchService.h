@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LogStore.h"
 #include "Record.h"
 #include "SearchQuery.h"
 
@@ -12,11 +13,12 @@
 
 /// The outcome of a search (DESIGN.md section 6.1).
 struct SearchResult {
-    quint64 generation = 0;  // the number search() returned
-    QVector<Record> rows;    // at most maxRows, newest first
-    qint64 total = 0;        // all matches
-    Histogram histogram;     // no bars when nothing matches and the period is unbounded
-    QVector<StatsRow> stats; // only when statsMode is not None; largest groups first
+    quint64 generation = 0;      // the number search() returned
+    QVector<Record> rows;        // at most maxRows, newest first
+    qint64 total = 0;            // all matches
+    Histogram histogram;         // no bars when nothing matches and the period is unbounded
+    QVector<StatsRow> stats;     // only when statsMode is not None; largest groups first
+    QVector<SourceInfo> sources; // every source and its record count (matches or not), by name
     qint64 elapsedMs = 0;
     QString error; // empty on success; otherwise the members above are empty
 };

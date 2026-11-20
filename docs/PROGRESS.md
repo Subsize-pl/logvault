@@ -9,8 +9,8 @@ One stage per session, in order (see `docs/DESIGN.md` §9). Update this file at 
 | 2 | Storage | done | 2026-11-19 |
 | 3 | Intake | done | 2026-11-20 |
 | 4 | Search | done | 2026-11-20 |
-| 5 | Main window | **next** | |
-| 6 | Analysis | — | |
+| 5 | Main window | done | 2026-11-20 |
+| 6 | Analysis | **next** | |
 | 7 | Polish | — | |
 
 ## Environment
@@ -467,3 +467,153 @@ hint, the UI filters), 6.3 (new query shape and why), 6.4 (alignment, long range
   `count / total`; `id` and `noField` drive the double-click. The `Exporter` must stream all matches, not `maxRows`:
   add a streaming read to `LogStore` (for example, chunks ordered by `r.ts DESC, r.id DESC`) that takes the same
   `SqlFragment`.
+
+### Stage 5 — Main window (2026-11-20)
+
+**Built**
+
+- Core additions (stage 5 needed them; DESIGN updated):
+  - `SearchResult::sources` — every source with its record count, read in the search's own read transaction. The
+    Sources panel and "Found X of Y" come from it, so the GUI thread never opens a connection (the stage 5 rule "all DB
+    work off the GUI thread" wins over the stage 4 hint of a GUI-thread `LogStore`).
+  - `DatabaseJobs` (QObject, GUI thread; jobs in `QThreadPool::globalInstance()` with their own connection; one job at
+    a time): `open(path)` (creates a new file's schema, checks an old one), `renameSource(path, id, name)`,
+    `deleteSource(path, id)` (cancel between chunks), `cancel()`, `isRunning()`, `waitForFinished()`; signal
+    `finished(DatabaseJobResult{kind, databasePath, deleted, cancelled, error})`.
+  - `LineParser::scalarText(QJsonValue)` is public: the details panel shows field values the way the search sees them.
+- Build: `src/gui` is the static library `lv_gui` (all but `main.cpp`); `LogVault` is `main.cpp` + `lv_gui`; `lv_tests`
+  links `lv_gui` and creates a `QApplication` (offscreen under ctest).
+- `src/gui`: `MainWindow`, `FilterBar`, `PeriodDialog`, `SourcesPanel` (a two-column `QTreeWidget`: name, count),
+  `ReceiverPanel`, `RecordDetailsPanel`, `RecordTableModel`, `ImportDialog`, `LiveUpdater` (no widgets), `Theme` (level
+  and state colors, the monospace font — Consolas at the UI size), `Format` (`count` "12,345" in English whatever the
+  locale, `timestamp`, `dateTime`, `duration`, `firstLine`). About 2,500 lines with headers.
+
+**Window structure**
+
+```
+MainWindow
+├── menus   File: New Database (Ctrl+N), Open Database (Ctrl+O), Import Files (Ctrl+I), Exit
+│           Data: Rename Source, Delete Source        Receiver: Start/Stop Receiver (Ctrl+R)
+│           View: Panels ▸ (Sources, Receiver, Record Details), Live Mode (Ctrl+L), Refresh (F5); Ctrl+F = search line
+├── toolbar Open, Import | Start/Stop Receiver | Live, Refresh
+├── docks   Sources (left, top), Receiver (left, bottom), Record Details (right)
+├── center  QStackedWidget: placeholder page (New / Open buttons) | workspace page:
+│             FilterBar
+│             QSplitter: histogram area (a QFrame, 110 px) | QTabWidget: "Records (N)" QTableView, "Statistics" (empty)
+└── status  search status (stretch) | job label + Cancel | import label + progress + Cancel | live indicator
+```
+
+- **Histogram placeholder and Statistics tab** are made in `MainWindow::createWorkspace()`: the `QFrame` named in a
+  comment there and `m_tabs->addTab(new QWidget, tr("Statistics"))`. Stage 6 replaces both in that function.
+- Defaults are constants at the top of `MainWindow.cpp`: `kReceiverAddress` (127.0.0.1), `kReceiverPort` (5170),
+  `kMaxRows` (10,000) — stage 7 turns them into settings.
+
+**Signals between the parts**
+
+| From | Signal | To |
+|---|---|---|
+| `FilterBar` | `searchRequested()` (levels, period, Enter, Search, cleared line) | `MainWindow::search()` |
+| `SourcesPanel` | `selectionChanged()` (only when the selected ids change) | `updateActions()` + `search()` |
+| `RecordDetailsPanel` | `searchTermRequested(term)` | `FilterBar::addSearchTerm()` (appends, searches) |
+| `RecordDetailsPanel` | `levelFilterRequested(level, exclude)` | `FilterBar::showOnlyLevel()` / `hideLevel()` |
+| `RecordDetailsPanel` | `sourceFilterRequested(name, exclude)` | `SourcesPanel::showOnlySource()` / `hideSource()` |
+| table selection, scroll bar, model reset | — | details panel, `LiveUpdater::setPaused()` |
+| `SearchService` | `finished(SearchResult)` | `showSearchResult()`: table, sources, tab title, status |
+| `DatabaseJobs` | `finished(DatabaseJobResult)` | `showJobResult()`: switch database, refresh, messages |
+| `FileImporter` | `progressChanged()` / `finished()` | status bar / summary box + search |
+| `Ingestor` | `recordsWritten()` | `LiveUpdater::recordsWritten()` → `refreshDue()` → `search()` |
+| `Ingestor`, `TcpServer` | `errorOccurred()` | `reportError()`: one non-modal box, repeats update it |
+| `TcpServer` | `statsChanged()` | `ReceiverPanel::setStats()`, the receiver action's text and icon |
+
+**Behavior**
+
+- Opening: `DatabaseJobs::open()` checks (or creates) the file in the background; the current database stays open
+  until then. On success `closeDatabase()` runs, a new intake thread is created exactly as in the stage 3 notes,
+  `SearchService::setDatabasePath()`, and a search starts. The same file again does nothing.
+- `closeDatabase()` (window close, switching): blocking `server->stop(); ingestor->stop()` → cancel the importer and
+  the jobs → `SearchService::setDatabasePath({})` (running searches go stale) → wait for the importer, the jobs and the
+  search pool → `quit()` + `wait()` the intake thread. A wait cursor shows meanwhile.
+- One database job at a time: New, Open, Rename and Delete are disabled while one runs; the status bar shows it
+  (a deletion has Cancel).
+- Search status: "Found X of Y · showing the newest N · 0.18 s" (Y = sum of the source counts); "Searching..." only
+  after 300 ms. Relative periods send `to = now + 1`.
+- "Search for this value": a field gives `name:` + `SearchQuery::quote(value)`, the message its quoted first line
+  (at most 200 characters), the level and the source change the buttons and the selection; the time and null fields
+  can only be copied. Excluding a source when "All" is selected selects every other source.
+- Live mode: `LiveUpdater` (1 s, never during a search); paused while the table is scrolled down or a record is
+  selected; the indicator says "Live paused · Resume" (the link clears the selection and scrolls up; Esc in the table
+  clears the selection).
+- Import: menu or drag and drop (the dialog opens after the drop returns, so Explorer is not blocked); `ImportDialog`
+  has an editable combo per file (file name without extension, existing sources); progress + Cancel in the status bar;
+  summary box "Added N records, M lines not parsed, took T"; a search afterwards. Lines that name their own source
+  (JSON `service`) keep it.
+- Ctrl+C copies the raw lines of the selected rows; the header's context menu hides and shows columns (the last
+  visible one stays); columns can be moved and resized.
+
+**Tests** (five new classes and one new function; the whole suite: 432 passed, 1 skipped — the performance test)
+
+- `TestDatabaseJobs` (7): open/create, a text file rejected, rename, taken name, delete over two chunks, cancel keeps
+  the source and the rest, one job at a time. `failOnWarning()` in `init()`.
+- `TestRecordTableModel` (8, with `QAbstractItemModelTester`): headers, texts, first line, cutting between surrogates,
+  colors and fonts, raw lines in row order, resets.
+- `TestLiveUpdater` (6, 100 ms interval): quiet while off, catch-up refresh, at most once per interval, waits for the
+  running search, waits while paused, state changes.
+- `TestFilterBar` (7): defaults, toggling, Ctrl+click, relative and custom periods, search terms, history of 20.
+- `TestPanels` (6): "All" and the counts, show only / hide a source, selection across refreshes, "All" vs sources,
+  field values and the filters the details panel asks for.
+- `TestSearchService::deliversSourcesWithEveryResult`.
+
+**Checks done**
+
+- Clean rebuild of `build/debug`: no warnings; ctest 1/1 passed. Every commit of the branch builds and passes the
+  tests (`git rebase -x`). `grep`: no SQL in `src/gui`, no debug output, sources ASCII.
+- Smoke run: `LogVault.exe` alive after 5 s with the title "LogVault", no output on stderr, closed by `WM_CLOSE`.
+- A scripted run of the real `MainWindow` on the offscreen platform (a throwaway program in the session scratchpad,
+  not committed) passed with no Qt warnings: create a database; import the 2,000-line sample through the file, source
+  and summary dialogs; Ctrl+click ERROR and back; phrase and `seq:19*` searches; clearing the line; start the receiver;
+  live mode shows 300 TCP lines; a selection pauses live mode and Resume catches up; double-click on `provider` gives
+  `provider:"bepaid"`; a busy port gives "Cannot listen on 127.0.0.1:5170: The bound address is already in use" + the
+  hint; rename and delete a source; close while `python_client.py --count` keeps sending; reopen — all 7,156 records
+  are there. Nothing was checked visually (no screen).
+
+**ASSUMPTIONs**
+
+- A running receiver keeps running when another database is opened.
+- New Database never replaces a file: an existing name gets a message (use Open Database).
+- One database job at a time; a database switch cancels a running import (committed transactions stay; the summary
+  says it was cancelled).
+- The table shows local time with the date (`yyyy-MM-dd HH:mm:ss.zzz`); counts use English separators.
+- The search history lives for the session only (20 entries).
+
+**DESIGN changes** — 2.2 (Sources is a two-column `QTreeWidget`), 3.1 and 8 (`lv_gui`), 3.2 (`DatabaseJobs`,
+`ImportDialog`, `LiveUpdater`, `Format`), 3.3 (`DatabaseJobs` in the pool; the shutdown order also when switching
+databases), 6.1 (`SearchResult::sources`), 7.1 (files), 11.1 (`provider:"bepaid"`).
+
+**Manual checklist for the author** — not run by the author yet (the scripted run above covers the same steps
+without a screen):
+
+1. Build and start: `cmake --preset debug && cmake --build --preset debug`, then `build\debug\LogVault.exe`
+   (with `C:\msys64\ucrt64\bin` in `PATH`) or run `LogVault` from CLion.
+2. File → New Database… → `demo.lvdb`: the title becomes "LogVault — demo.lvdb", the status says "Found 0 of 0".
+3. `python examples/python_client.py --file sample.log --count 2000`, then File → Import Files… (or drag the file onto
+   the window): the source dialog, progress in the status bar, the summary "Added 2,000 records…".
+4. Filters: level buttons (click, Ctrl+click), Period presets and Custom range…, the search line (`"line 1999 "`,
+   `seq:19*`, `-seq:1*`, Enter / Search, the history drop-down while typing), sources (Ctrl+click several), the record
+   details (right-click a field → Search for / Exclude / Copy; double-click), Ctrl+C on rows, the header menu.
+5. Receiver → Start Receiver (Ctrl+R): the Receiver panel says "Listening on 127.0.0.1:5170".
+6. Live Mode on (Ctrl+L), `python examples/python_client.py --demo`: a connection in the Receiver panel, lines/s,
+   new records about once per second; select a record → "Live paused · Resume".
+7. Close the window while the demo is sending, start LogVault again, File → Open Database… → `demo.lvdb`: the records
+   are there; no error messages.
+
+**For the next stages**
+
+- Stage 6: put `HistogramWidget` in place of the `QFrame` in `MainWindow::createWorkspace()`; a drag-select calls
+  `FilterBar::setCustomPeriod(from, to)` (it emits `searchRequested()`); Esc needs the previous period, so `FilterBar`
+  must remember the period before a custom one. `StatsView` replaces the empty Statistics tab; set
+  `request.statsMode` in `MainWindow::search()` only while that tab is current and search again when the tab changes;
+  double-clicks use `FilterBar::showOnlyLevel()`, `SourcesPanel::showOnlySource()` and `FilterBar::addSearchTerm()`.
+  Deleting old records fits `DatabaseJobs` (a new kind with the same cancel flag) + a Data menu action; `Exporter`
+  needs a status bar indicator like the import one.
+- Stage 7: the constants at the top of `MainWindow.cpp` become settings; docks and the toolbar need object names for
+  `saveState()`; the recent list goes on the placeholder (`createPlaceholder()`).

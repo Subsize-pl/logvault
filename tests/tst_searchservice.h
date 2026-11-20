@@ -16,6 +16,7 @@ private slots:
     void cleanup();
 
     void deliversResult();
+    void deliversSourcesWithEveryResult();
     void computesStatisticsOnlyWhenAsked();
     void dropsStaleResults();
     void dropsResultsOfPreviousDatabase();

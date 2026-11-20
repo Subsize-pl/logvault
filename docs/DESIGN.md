@@ -142,7 +142,7 @@ users and permissions, a web UI, an installer, CI/CD.
 
 | Element | Implementation | Behavior |
 |---|---|---|
-| Sources | `QListWidget` | First item "All". Selecting one or several (Ctrl/Shift) filters by source. Context menu: rename, delete. Counts refresh after each search and in live mode. |
+| Sources | `QTreeWidget` (name, count) | First item "All". Selecting one or several (Ctrl/Shift) filters by source. Context menu: rename, delete. Counts refresh after each search and in live mode. |
 | Receiver | `QWidget` + `QTableView` | Server state (address, port, running/stopped/error), start/stop button, connections table, receive rate (lines/s). |
 | Levels | checkable `QToolButton`s in level colors | All on by default. Click toggles a level; Ctrl+click keeps only that level. |
 | Period | `QComboBox` | Last 15 minutes, Last hour, Last 24 hours, Last 7 days, All time (default), Custom range… (dialog with two `QDateTimeEdit`s). |
@@ -185,7 +185,8 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `gui` | `src/gui` | Main window, panels, dialogs, table models, histogram. | Widgets |
 
 `core` is built as the static library `lv_core`, used by the application and the tests. `core` must never include
-`QtWidgets`: this keeps the logic testable without a window and the UI layer thin.
+`QtWidgets`: this keeps the logic testable without a window and the UI layer thin. `gui` is the static library
+`lv_gui` (everything but `main.cpp`), so the tests can check its models as well.
 
 ### 3.2. Classes
 
@@ -203,9 +204,11 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `TcpServer` | core | Listens on a port, manages connections, splits the byte stream into lines. |
 | `FileImporter` | core | Imports files in a worker thread: progress, cancel, summary. |
 | `Exporter` | core | Exports results to CSV / JSON Lines in a worker thread. |
+| `DatabaseJobs` | core | Opens a database file (creating a new one) and renames or deletes sources in a worker thread, one job at a time. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
-| `SettingsDialog`, `PeriodDialog`, `Theme` | gui | Settings, custom period, colors and palettes. |
+| `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, colors and palettes, how numbers and times are written. |
+| `LiveUpdater` | gui | Decides when live mode refreshes the search (§6.6); no widgets, so it is tested on its own. |
 
 ### 3.3. Threads
 
@@ -215,7 +218,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
    ├──▶ intake thread (QThread): TcpServer → Ingestor → batched writes        [own DB connection]
    ├──▶ thread pool (QThreadPool): FileImporter → parsing → 1,000-record transactions [own DB connection]
    ├──▶ SearchService's own pool (2 threads) → span, histogram, rows, statistics [own DB connection, read-only]
-   └──▶ thread pool: Exporter, deleting old records                           [own DB connection]
+   └──▶ thread pool: DatabaseJobs (open, rename, delete), Exporter           [own DB connection]
 ```
 
 Rules:
@@ -229,9 +232,9 @@ Rules:
 - Every search gets a number (generation). If the user starts a new search, results of the old one are dropped, and
   the old one stops after its current query. Searches run in a pool of their own with two threads, so stale searches
   never take every core from the newest one.
-- Shutdown order: stop the server → `Ingestor` writes the pending batch → cancel import and export → wait for the
-  thread pools (`SearchService` waits for its own searches when destroyed) → `quit()` + `wait()` the intake thread →
-  close connections.
+- Shutdown order: stop the server → `Ingestor` writes the pending batch → cancel import, export and database jobs →
+  wait for the thread pools (`SearchService` waits for its own searches when destroyed) → `quit()` + `wait()` the
+  intake thread → close connections. The same order applies when another database is opened.
 
 ### 3.4. The path of one log line (under the hood)
 
@@ -451,6 +454,7 @@ struct SearchResult {
     qint64  total = 0;               // total number of matches
     Histogram histogram;             // no bars when nothing matches and the period is unbounded
     QVector<StatsRow> stats;         // only when statsMode != None; largest groups first
+    QVector<SourceInfo> sources;     // every source and its record count, for the Sources panel and the status bar
     qint64  elapsedMs = 0;
     QString error;                   // empty = success; otherwise the other members are empty
 };
@@ -461,7 +465,8 @@ values (`SqlFragment { QString sql; QVariantList values; }`).
 `SearchService::search(request)` starts the work in the thread pool and returns the search number;
 the result arrives through the `finished(SearchResult)` signal. A failed search (no database, a missing or foreign file,
 an invalid statistics field) is a result with `error` set. A result is dropped when a newer search or
-`setDatabasePath()` came after its start; a running stale search stops between its queries.
+`setDatabasePath()` came after its start; a running stale search stops between its queries. The sources and their counts
+are read in the same transaction, so the GUI thread never needs a database connection of its own.
 
 ### 6.2. Search line
 
@@ -583,10 +588,10 @@ logvault/
 ├── CMakePresets.json
 ├── src/
 │   ├── core/       Record, TimeParser, LineParser, Database, LogStore, SearchQuery, SearchService,
-│   │               LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
+│   │               DatabaseJobs, LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
-│                   HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView, SettingsDialog,
-│                   Theme, resources.qrc (application icon)
+│                   ImportDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView,
+│                   LiveUpdater, SettingsDialog, Theme, Format, resources.qrc (application icon)
 ├── tests/          tst_*.cpp (Qt Test)
 ├── examples/       python_client.py
 ├── docs/           DESIGN.md, PROGRESS.md
@@ -652,7 +657,8 @@ CMake, Ninja and Qt 6 (`qt6-base`). `C:\msys64\ucrt64\bin` must be first in `PAT
 In CLion: *Settings → Build, Execution, Deployment → Toolchains → + MinGW*, path `C:\msys64\ucrt64`, make it the default.
 
 **CMake.** `find_package(Qt6 6.5 REQUIRED COMPONENTS Core Sql Network Concurrent Widgets Test)`, `qt_standard_project_setup()`.
-Targets: `lv_core` (static library), `LogVault` (`WIN32_EXECUTABLE`), `lv_tests` (registered with `add_test`).
+Targets: `lv_core` and `lv_gui` (static libraries), `LogVault` (`WIN32_EXECUTABLE`, `main.cpp` only), `lv_tests`
+(registered with `add_test`).
 C++20, warnings `-Wall -Wextra -Wpedantic`. `CMakePresets.json` with `debug` and `release` presets
 (Ninja, `binaryDir` = `build/<preset>`), so the build is:
 
@@ -718,7 +724,7 @@ Target `lv_tests`, Qt Test (`QTest`, `QSignalSpy`). Coverage:
    the histogram grows, and after 20 seconds there is a red spike.
 3. Drag-select the spike on the histogram — the period narrows.
 4. Keep only ERROR; Statistics → "similar messages": `Payment provider timeout after # ms` covers almost all errors.
-5. Double-click the `provider` field in the record details → `provider:bepaid` in the search line; statistics by the
+5. Double-click the `provider` field in the record details → `provider:"bepaid"` in the search line; statistics by the
    `provider` field confirm that one provider is at fault.
 6. Import an old log file — progress in the status bar; its records appear as a separate source.
 7. Export the results to CSV and open them in Excel.

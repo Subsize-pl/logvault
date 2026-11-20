@@ -87,20 +87,6 @@ QString numberText(const QJsonValue& value) {
     return QString::number(value.toDouble(), 'g', QLocale::FloatingPointShortest);
 }
 
-// The text of a string, number or boolean; nothing for null, objects and arrays.
-std::optional<QString> scalarText(const QJsonValue& value) {
-    switch (value.type()) {
-    case QJsonValue::String:
-        return value.toString();
-    case QJsonValue::Double:
-        return numberText(value);
-    case QJsonValue::Bool:
-        return value.toBool() ? u"true"_s : u"false"_s;
-    default:
-        return std::nullopt;
-    }
-}
-
 // Copies the object into fields, naming nested values with dots ({"http":{"status":500}} gives
 // "http.status"); arrays are kept as JSON text, so every field holds a single value.
 void flatten(const QJsonObject& object, const QString& prefix, QJsonObject& fields) {
@@ -138,12 +124,12 @@ bool parseJson(const QByteArray& line, QStringView text, Record& record, QJsonOb
         return record.level != Level::Unknown;
     });
     const bool hasMessage = takeField(object, kMessageNames, [&record](const QJsonValue& value) {
-        const std::optional<QString> message = scalarText(value);
+        const std::optional<QString> message = LineParser::scalarText(value);
         record.message = message.value_or(QString());
         return message.has_value();
     });
     takeField(object, kSourceNames, [&record](const QJsonValue& value) {
-        const QString name = scalarText(value).value_or(QString()).trimmed();
+        const QString name = LineParser::scalarText(value).value_or(QString()).trimmed();
         if (!name.isEmpty()) {
             record.source = name;
         }
@@ -264,4 +250,17 @@ Level LineParser::levelFromName(QStringView name) {
         }
     }
     return Level::Unknown;
+}
+
+std::optional<QString> LineParser::scalarText(const QJsonValue& value) {
+    switch (value.type()) {
+    case QJsonValue::String:
+        return value.toString();
+    case QJsonValue::Double:
+        return numberText(value);
+    case QJsonValue::Bool:
+        return value.toBool() ? u"true"_s : u"false"_s;
+    default:
+        return std::nullopt;
+    }
 }

@@ -3,6 +3,8 @@ qt_add_library(lv_core STATIC
     AppInfo.h
     Database.cpp
     Database.h
+    DatabaseJobs.cpp
+    DatabaseJobs.h
     FileImporter.cpp
     FileImporter.h
     Ingestor.cpp
