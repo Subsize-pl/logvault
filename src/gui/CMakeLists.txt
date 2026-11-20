@@ -1,7 +1,13 @@
 # Everything but main.cpp is a library, so the tests can check the models and widgets too.
 qt_add_library(lv_gui STATIC
+    Format.cpp
+    Format.h
     MainWindow.cpp
     MainWindow.h
+    RecordTableModel.cpp
+    RecordTableModel.h
+    Theme.cpp
+    Theme.h
 )
 
 target_include_directories(lv_gui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

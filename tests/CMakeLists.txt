@@ -17,6 +17,8 @@ qt_add_executable(lv_tests
     tst_linesplitter.h
     tst_pythonclient.cpp
     tst_pythonclient.h
+    tst_recordtablemodel.cpp
+    tst_recordtablemodel.h
     tst_search.cpp
     tst_search.h
     tst_searchquery.cpp
