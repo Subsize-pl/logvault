@@ -746,6 +746,7 @@ One stage per session, in order. Status and handoff notes: `docs/PROGRESS.md`.
 | 5 | Main window | 2, 3.3 | `MainWindow`, Sources/Receiver/Details panels, `FilterBar`, records table, import with progress, server start/stop, live mode | manual: open a DB, import, filters and search, live intake from Python |
 | 6 | Analysis | 2.2, 6.4–6.7 | `HistogramWidget` (with zoom), `StatsView`, export, deleting old records | steps 2–7 of the demo (§11.1) work |
 | 7 | Polish | 0.1, 2.3, 2.4 | `SettingsDialog`, themes, saved layout, recent databases, error messages, About dialog, icon, `README.md` with screenshots | the demo runs twice in a row without problems; §0.1 checked |
+| 8 | Final review | all | The fixes found by a review of the finished application: CSV formula escaping (§6.7), a question before a database switch or exit cancels an import or export | the demo and the manual checks pass; no open items |
 
 ---
 
