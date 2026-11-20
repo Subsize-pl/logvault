@@ -4,6 +4,7 @@
 #include "Exporter.h"
 #include "FileImporter.h"
 #include "SearchService.h"
+#include "Settings.h"
 #include "TcpServer.h"
 
 #include <QMainWindow>
@@ -19,6 +20,7 @@ class QDockWidget;
 class QLabel;
 class QMessageBox;
 class QPushButton;
+class QSettings;
 class QStackedWidget;
 class QTabWidget;
 class QTableView;
@@ -38,7 +40,9 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    /// The settings are read from the store, and changes to them, the recent databases and the window
+    /// layout are written to it.
+    explicit MainWindow(QSettings& store, QWidget* parent = nullptr);
     /// Closes the database in the order of DESIGN.md section 3.3.
     ~MainWindow() override;
 
@@ -72,6 +76,7 @@ private:
     void toggleReceiver();
     void startReceiver();
     void showReceiverStats(const ReceiverStats& stats);
+    void updateReceiverAction();
     void showReceiverError(const QString& message);
 
     void chooseImportFiles();
@@ -104,6 +109,9 @@ private:
     void reportError(const QString& message);
     QString dialogDirectory() const;
     QString databaseFilter() const;
+
+    QSettings& m_store;
+    Settings m_settings;
 
     QAction* m_newAction = nullptr;
     QAction* m_openAction = nullptr;

@@ -57,12 +57,6 @@ using namespace Qt::StringLiterals;
 
 namespace {
 
-// Defaults of the settings in DESIGN.md section 1.2 (F16): the receiver listens on this computer only, on
-// the port the Python client uses, and the table shows the newest 10,000 matches.
-constexpr QHostAddress::SpecialAddress kReceiverAddress = QHostAddress::LocalHost;
-constexpr quint16 kReceiverPort = 5170;
-constexpr int kMaxRows = 10'000;
-
 // A search that takes longer shows "Searching..."; for faster ones the text would only flicker.
 constexpr int kSearchingDelayMs = 300;
 constexpr int kMessageTimeoutMs = 5000;
@@ -89,8 +83,9 @@ QStringList localFiles(const QMimeData* data) {
 
 } // namespace
 
-MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent), m_records(new RecordTableModel(this)), m_searchService(new SearchService(this)),
+MainWindow::MainWindow(QSettings& store, QWidget* parent)
+    : QMainWindow(parent), m_store(store), m_settings(Settings::load(store)),
+      m_records(new RecordTableModel(this)), m_searchService(new SearchService(this)),
       m_jobs(new DatabaseJobs(this)), m_importer(new FileImporter(this)), m_exporter(new Exporter(this)),
       m_live(new LiveUpdater(LiveUpdater::kDefaultIntervalMs, this)), m_searchingTimer(new QTimer(this)) {
     setWindowTitle(AppInfo::name());
@@ -499,7 +494,7 @@ void MainWindow::switchDatabase(const QString& path) {
     setWindowTitle(AppInfo::name() + u' ' + kEmDash + u' ' + QFileInfo(path).fileName());
     m_pages->setCurrentWidget(m_workspacePage);
     // Clients keep sending while the user switches databases, so a running receiver goes on with the new one.
-    if (receiverWasOn) {
+    if (receiverWasOn || m_settings.autostartReceiver) {
         startReceiver();
     }
     updateActions();
@@ -607,18 +602,26 @@ void MainWindow::startReceiver() {
     }
     m_receiverStarting = true;
     TcpServer* server = m_server;
-    QMetaObject::invokeMethod(server,
-                              [server] { server->start(QHostAddress(kReceiverAddress), kReceiverPort); });
+    const QHostAddress address = m_settings.receiverAddress();
+    const quint16 port = m_settings.port;
+    const QString source = m_settings.defaultSource;
+    QMetaObject::invokeMethod(server, [server, address, port, source] {
+        server->setDefaultSource(source);
+        server->start(address, port);
+    });
 }
 
 void MainWindow::showReceiverStats(const ReceiverStats& stats) {
     m_receiverStarting = false;
     m_receiverPanel->setStats(stats);
-    if (stats.listening == m_receiverListening && !m_receiverAction->text().isEmpty()) {
-        return;
+    if (stats.listening != m_receiverListening || m_receiverAction->text().isEmpty()) {
+        m_receiverListening = stats.listening;
+        updateReceiverAction();
     }
-    m_receiverListening = stats.listening;
-    if (stats.listening) {
+}
+
+void MainWindow::updateReceiverAction() {
+    if (m_receiverListening) {
         m_receiverAction->setText(tr("Stop &Receiver"));
         m_receiverAction->setIcon(Theme::glyphIcon(Theme::Glyph::Stop));
         m_receiverAction->setToolTip(tr("Stop receiving logs"));
@@ -626,8 +629,8 @@ void MainWindow::showReceiverStats(const ReceiverStats& stats) {
         m_receiverAction->setText(tr("Start &Receiver"));
         m_receiverAction->setIcon(Theme::glyphIcon(Theme::Glyph::Start));
         m_receiverAction->setToolTip(tr("Receive logs over TCP on %1:%2")
-                                         .arg(QHostAddress(kReceiverAddress).toString())
-                                         .arg(kReceiverPort));
+                                         .arg(m_settings.receiverAddress().toString())
+                                         .arg(m_settings.port));
     }
 }
 
@@ -876,7 +879,7 @@ void MainWindow::search() {
         return;
     }
     SearchRequest request = currentFilters();
-    request.maxRows = kMaxRows;
+    request.maxRows = m_settings.maxRows;
     m_statsView->prepareRequest(request, m_tabs->currentWidget() == m_statsView);
     // SearchService delivers the result of the latest search only, so an earlier one never overwrites it.
     m_searchService->search(request);
