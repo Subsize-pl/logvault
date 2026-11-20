@@ -36,6 +36,7 @@ private slots:
     void deleteSourceRemovesItsRecords();
     void deleteSourceCanBeCancelled();
     void deleteOlderThanIsStrict();
+    void deletionReportsProgress();
     void unicodeRoundTrip();
     void writersAndReaderInParallel();
 

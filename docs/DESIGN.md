@@ -197,7 +197,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `LineParser` | core | Line → `Record`: JSON or plain text, fields. Stateless (`LogStore` computes `msg_key`). |
 | `LineSplitter` | core | Splits a byte stream into lines: line breaks, blank lines, the 64 KB limit. Shared by `TcpServer` and `FileImporter`. |
 | `Database` | core | Opens a connection in the current thread, applies SQLite settings, creates the schema. |
-| `LogStore` | core | All SQL: batch insert, sources, search, histogram, statistics, deletion. The only place with SQL. |
+| `LogStore` | core | All SQL: batch insert, sources, search (also a streaming read of every match, for the export), histogram, statistics, chunked deletion with progress. The only place with SQL. |
 | `SearchQuery` | core | Filters + search line → `WHERE` clause and bound values (§6). |
 | `SearchService` | core | Runs searches in a worker thread and delivers results via a signal. |
 | `Ingestor` | core | Collects received lines into batches and writes them to the database. |
