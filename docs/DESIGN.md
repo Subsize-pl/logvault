@@ -142,7 +142,7 @@ users and permissions, a web UI, an installer, CI/CD.
 
 | Element | Implementation | Behavior |
 |---|---|---|
-| Sources | `QListWidget` | First item "All". Selecting one or several (Ctrl/Shift) filters by source. Context menu: rename, delete. Counts refresh after each search and in live mode. |
+| Sources | `QTreeWidget` (name, count) | First item "All". Selecting one or several (Ctrl/Shift) filters by source. Context menu: rename, delete. Counts refresh after each search and in live mode. |
 | Receiver | `QWidget` + `QTableView` | Server state (address, port, running/stopped/error), start/stop button, connections table, receive rate (lines/s). |
 | Levels | checkable `QToolButton`s in level colors | All on by default. Click toggles a level; Ctrl+click keeps only that level. |
 | Period | `QComboBox` | Last 15 minutes, Last hour, Last 24 hours, Last 7 days, All time (default), Custom range… (dialog with two `QDateTimeEdit`s). |
@@ -207,7 +207,8 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `DatabaseJobs` | core | Opens a database file (creating a new one) and renames or deletes sources in a worker thread, one job at a time. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
-| `SettingsDialog`, `PeriodDialog`, `Theme` | gui | Settings, custom period, colors and palettes. |
+| `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, colors and palettes, how numbers and times are written. |
+| `LiveUpdater` | gui | Decides when live mode refreshes the search (§6.6); no widgets, so it is tested on its own. |
 
 ### 3.3. Threads
 
@@ -589,8 +590,8 @@ logvault/
 │   ├── core/       Record, TimeParser, LineParser, Database, LogStore, SearchQuery, SearchService,
 │   │               DatabaseJobs, LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
-│                   HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView, SettingsDialog,
-│                   Theme, resources.qrc (application icon)
+│                   ImportDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView,
+│                   LiveUpdater, SettingsDialog, Theme, Format, resources.qrc (application icon)
 ├── tests/          tst_*.cpp (Qt Test)
 ├── examples/       python_client.py
 ├── docs/           DESIGN.md, PROGRESS.md
@@ -723,7 +724,7 @@ Target `lv_tests`, Qt Test (`QTest`, `QSignalSpy`). Coverage:
    the histogram grows, and after 20 seconds there is a red spike.
 3. Drag-select the spike on the histogram — the period narrows.
 4. Keep only ERROR; Statistics → "similar messages": `Payment provider timeout after # ms` covers almost all errors.
-5. Double-click the `provider` field in the record details → `provider:bepaid` in the search line; statistics by the
+5. Double-click the `provider` field in the record details → `provider:"bepaid"` in the search line; statistics by the
    `provider` field confirm that one provider is at fault.
 6. Import an old log file — progress in the status bar; its records appear as a separate source.
 7. Export the results to CSV and open them in Excel.
