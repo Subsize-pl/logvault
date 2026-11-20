@@ -8,6 +8,8 @@ qt_add_executable(lv_tests
     tst_environment.cpp
     tst_environment.h
     tst_fileimporter.cpp
+    tst_filterbar.cpp
+    tst_filterbar.h
     tst_fileimporter.h
     tst_intake.cpp
     tst_intake.h
