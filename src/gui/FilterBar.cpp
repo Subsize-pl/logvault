@@ -85,9 +85,30 @@ void FilterBar::hideLevel(Level level) {
     emit searchRequested();
 }
 
-void FilterBar::setCustomPeriod(qint64 from, qint64 to) {
+void FilterBar::zoomToPeriod(qint64 from, qint64 to) {
+    if (from >= to || (currentPeriod() == Period::Custom && from == m_customFrom && to == m_customTo)) {
+        return;
+    }
+    m_zoomHistory.append(periodState());
+    if (m_zoomHistory.size() > kZoomHistorySize) {
+        m_zoomHistory.removeFirst();
+    }
     applyCustomPeriod(from, to);
     emit searchRequested();
+}
+
+bool FilterBar::restorePreviousPeriod() {
+    if (m_zoomHistory.isEmpty()) {
+        return false;
+    }
+    const PeriodState previous = m_zoomHistory.takeLast();
+    m_customFrom = previous.customFrom;
+    m_customTo = previous.customTo;
+    m_period->setItemText(m_period->findData(static_cast<int>(Period::Custom)), previous.customText);
+    m_periodIndex = previous.index;
+    m_period->setCurrentIndex(m_periodIndex);
+    emit searchRequested();
+    return true;
 }
 
 void FilterBar::addSearchTerm(const QString& term) {
@@ -178,6 +199,8 @@ void FilterBar::periodActivated(int index) {
         return;
     }
     m_periodIndex = index;
+    // A period the user picks starts over: Esc never goes back past it.
+    m_zoomHistory.clear();
     emit searchRequested();
 }
 
@@ -224,6 +247,11 @@ std::pair<qint64, qint64> FilterBar::range(Period period, qint64 now) const {
 
 FilterBar::Period FilterBar::currentPeriod() const {
     return static_cast<Period>(m_period->itemData(m_periodIndex).toInt());
+}
+
+FilterBar::PeriodState FilterBar::periodState() const {
+    return {m_periodIndex, m_customFrom, m_customTo,
+            m_period->itemText(m_period->findData(static_cast<int>(Period::Custom)))};
 }
 
 void FilterBar::submitSearch() {

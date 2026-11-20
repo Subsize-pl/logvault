@@ -13,6 +13,8 @@ qt_add_executable(lv_tests
     tst_filterbar.cpp
     tst_filterbar.h
     tst_fileimporter.h
+    tst_histogram.cpp
+    tst_histogram.h
     tst_intake.cpp
     tst_intake.h
     tst_lineparser.cpp

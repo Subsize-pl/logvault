@@ -553,8 +553,15 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
   aligned down to a multiple of the step, counted from 1970-01-01 UTC.
 - The bars cover the period of the search. "All time" and other open-ended periods end at the oldest or the newest
   match; a bounded period without matches still gets its empty bars, so the time axis stays.
-- Bars are stacked by level using the `Theme` colors; the tooltip shows the interval and per-level counts.
-- Drag-select → the "Custom range" period from the selection bounds → a new search. Esc restores the previous period.
+- Bars are stacked by level using the `Theme` colors, the most severe at the bottom (FATAL, ERROR, … UNKNOWN), so a
+  spike of errors stands on the axis; the tooltip shows the interval and per-level counts. The scale is labeled with
+  the count of the fullest bar.
+- Time labels sit on round local times (14:00, 14:15) at a spacing that fits the bars, as precise as that spacing
+  (`HH:mm:ss`, `HH:mm`, `MMM d`, `yyyy-MM-dd`); a label at local midnight shows the date. Day bars start at UTC midnight,
+  so their labels sit on round UTC times. The widget paints the histogram of the last `SearchResult` only.
+- Drag-select → the "Custom range" period from the selection bounds → a new search. The selection snaps to whole bars;
+  a click selects nothing (it gives the histogram the focus). Esc restores the previous period: `FilterBar` remembers
+  the periods before the last 50 zooms and steps back one per Esc; choosing a period in the combo box forgets them.
 
 ### 6.5. Statistics
 

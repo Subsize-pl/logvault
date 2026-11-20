@@ -3,6 +3,7 @@
 #include "AppInfo.h"
 #include "FilterBar.h"
 #include "Format.h"
+#include "HistogramWidget.h"
 #include "ImportDialog.h"
 #include "Ingestor.h"
 #include "LiveUpdater.h"
@@ -22,7 +23,6 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -281,11 +281,7 @@ QWidget* MainWindow::createPlaceholder() {
 
 QWidget* MainWindow::createWorkspace() {
     m_filterBar = new FilterBar;
-
-    // The place of the histogram of record counts over time (DESIGN.md section 2.1).
-    auto* histogramArea = new QFrame;
-    histogramArea->setFrameShape(QFrame::StyledPanel);
-    histogramArea->setMinimumHeight(kHistogramHeight);
+    m_histogram = new HistogramWidget;
 
     m_table = createRecordsTable();
     m_tabs = new QTabWidget;
@@ -293,7 +289,7 @@ QWidget* MainWindow::createWorkspace() {
     m_tabs->addTab(new QWidget, tr("Statistics"));
 
     auto* splitter = new QSplitter(Qt::Vertical);
-    splitter->addWidget(histogramArea);
+    splitter->addWidget(m_histogram);
     splitter->addWidget(m_tabs);
     splitter->setStretchFactor(1, 1);
     splitter->setChildrenCollapsible(false);
@@ -400,6 +396,9 @@ void MainWindow::connectWidgets() {
     connect(m_live, &LiveUpdater::stateChanged, this, &MainWindow::updateLiveIndicator);
 
     connect(m_filterBar, &FilterBar::searchRequested, this, &MainWindow::search);
+    connect(m_histogram, &HistogramWidget::periodSelected, m_filterBar, &FilterBar::zoomToPeriod);
+    connect(m_histogram, &HistogramWidget::previousPeriodRequested, m_filterBar,
+            &FilterBar::restorePreviousPeriod);
     connect(m_sourcesPanel, &SourcesPanel::selectionChanged, this, [this] {
         updateActions();
         search();
@@ -523,6 +522,7 @@ void MainWindow::closeDatabase() {
     // The dropped search never reports back, so live mode must not keep waiting for it.
     m_live->searchFinished();
     m_records->setRecords({});
+    m_histogram->clear();
     m_sourcesPanel->setSources({});
     m_detailsPanel->clear();
     showReceiverStats({});
@@ -802,6 +802,7 @@ void MainWindow::showSearchResult(const SearchResult& result) {
     }
     m_records->setRecords(result.rows);
     m_table->scrollToTop();
+    m_histogram->setHistogram(result.histogram);
     m_sourcesPanel->setSources(result.sources);
     m_tabs->setTabText(m_tabs->indexOf(m_table), tr("Records (%1)").arg(Format::count(result.rows.size())));
 

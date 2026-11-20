@@ -4,6 +4,8 @@ qt_add_library(lv_gui STATIC
     FilterBar.h
     Format.cpp
     Format.h
+    HistogramWidget.cpp
+    HistogramWidget.h
     ImportDialog.cpp
     ImportDialog.h
     LiveUpdater.cpp

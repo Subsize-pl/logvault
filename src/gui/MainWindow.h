@@ -10,6 +10,7 @@
 #include <QStringList>
 
 class FilterBar;
+class HistogramWidget;
 class Ingestor;
 class LiveUpdater;
 class QAction;
@@ -119,6 +120,7 @@ private:
     QWidget* m_placeholderPage = nullptr;
     QWidget* m_workspacePage = nullptr;
     FilterBar* m_filterBar = nullptr;
+    HistogramWidget* m_histogram = nullptr;
     QTabWidget* m_tabs = nullptr;
     QTableView* m_table = nullptr;
     RecordTableModel* m_records;

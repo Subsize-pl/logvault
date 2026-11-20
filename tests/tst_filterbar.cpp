@@ -104,11 +104,57 @@ void TestFilterBar::relativePeriodEndsNow() {
 void TestFilterBar::customPeriodIsKept() {
     FilterBar bar;
     QSignalSpy searches(&bar, &FilterBar::searchRequested);
-    bar.setCustomPeriod(kNow - 2 * kHour, kNow - kHour);
+    bar.zoomToPeriod(kNow - 2 * kHour, kNow - kHour);
     QCOMPARE(searches.count(), 1);
     const SearchRequest request = requestOf(bar, kNow + 10 * kHour);
     QCOMPARE(request.from, kNow - 2 * kHour);
     QCOMPARE(request.to, kNow - kHour);
+    QVERIFY(bar.findChild<QComboBox*>()->currentText().contains(u" to "_s));
+}
+
+void TestFilterBar::zoomsBackThroughEarlierPeriods() {
+    FilterBar bar;
+    QSignalSpy searches(&bar, &FilterBar::searchRequested);
+    choosePeriod(bar, u"Last hour"_s);
+    bar.zoomToPeriod(kNow - 40 * 60'000, kNow - 20 * 60'000);
+    bar.zoomToPeriod(kNow - 30 * 60'000, kNow - 25 * 60'000);
+    // The same period again is no zoom.
+    bar.zoomToPeriod(kNow - 30 * 60'000, kNow - 25 * 60'000);
+    QCOMPARE(searches.count(), 3);
+    QCOMPARE(requestOf(bar).from, kNow - 30 * 60'000);
+
+    // Esc goes back one zoom at a time, to the relative period at last, which counts from now again.
+    QVERIFY(bar.restorePreviousPeriod());
+    SearchRequest request = requestOf(bar);
+    QCOMPARE(request.from, kNow - 40 * 60'000);
+    QCOMPARE(request.to, kNow - 20 * 60'000);
+    QVERIFY(bar.restorePreviousPeriod());
+    request = requestOf(bar, kNow + 5000);
+    QCOMPARE(request.from, kNow + 5000 - kHour);
+    QCOMPARE(request.to, kNow + 5000 + 1);
+    QCOMPARE(bar.findChild<QComboBox*>()->currentText(), u"Last hour"_s);
+    QCOMPARE(searches.count(), 5);
+    QVERIFY(!bar.restorePreviousPeriod());
+    QCOMPARE(searches.count(), 5);
+}
+
+void TestFilterBar::choosingAPeriodForgetsZooms() {
+    FilterBar bar;
+    bar.zoomToPeriod(kNow - 2 * kHour, kNow - kHour);
+    choosePeriod(bar, u"All time"_s);
+    QVERIFY(!bar.restorePreviousPeriod());
+    QCOMPARE(requestOf(bar).from, 0);
+
+    // Zooms beyond the limit drop the oldest ones.
+    for (int i = 0; i < FilterBar::kZoomHistorySize + 5; ++i) {
+        bar.zoomToPeriod(kNow - kHour + i, kNow);
+    }
+    int restored = 0;
+    while (bar.restorePreviousPeriod()) {
+        ++restored;
+    }
+    QCOMPARE(restored, FilterBar::kZoomHistorySize);
+    QCOMPARE(requestOf(bar).from, kNow - kHour + 4);
 }
 
 void TestFilterBar::addsSearchTermsAndRemembersThem() {
