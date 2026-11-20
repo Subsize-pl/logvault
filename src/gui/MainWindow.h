@@ -86,6 +86,7 @@ private:
     void showReceiverStats(const ReceiverStats& stats);
     void updateReceiverAction();
     void showReceiverError(const QString& message);
+    void showIntakeError(const QString& message);
 
     void chooseImportFiles();
     void importFiles(const QStringList& paths);
@@ -120,7 +121,8 @@ private:
     void syncStore();
     void showAbout();
     void updateActions();
-    void reportError(const QString& message);
+    void warn(const QString& title, const QString& text, const QString& advice);
+    void reportError(const QString& message, const QString& advice = {});
     QString dialogDirectory() const;
     QString databaseFilter() const;
 
@@ -171,6 +173,7 @@ private:
     TaskStatus* m_exportTask = nullptr;
     QLabel* m_liveStatus = nullptr;
     QMessageBox* m_errorBox = nullptr;
+    QString m_errorAdvice; // what to do about the error the box shows
     int m_errorsSinceShown = 0;
     bool m_storeErrorShown = false;
 

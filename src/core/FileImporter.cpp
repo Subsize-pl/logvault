@@ -122,7 +122,9 @@ bool ImportJob::importFile(const ImportFile& file) {
         if (firstBlock) {
             firstBlock = false;
             if (block.startsWith(kUtf16LittleEndianBom) || block.startsWith(kUtf16BigEndianBom)) {
-                return fail(tr("%1 is a UTF-16 file; only UTF-8 files can be imported.").arg(nativePath));
+                return fail(tr("%1 is a UTF-16 file; only UTF-8 files can be imported. Save it as UTF-8 "
+                               "and import it again.")
+                                .arg(nativePath));
             }
             if (block.startsWith(kUtf8Bom)) {
                 block = block.sliced(kUtf8Bom.size());

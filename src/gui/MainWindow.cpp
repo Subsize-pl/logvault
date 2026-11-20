@@ -562,11 +562,8 @@ void MainWindow::newDatabase() {
     }
     // A new database never replaces a file, so a slip in the dialog cannot lose data.
     if (QFileInfo::exists(path)) {
-        QMessageBox::warning(
-            this, tr("New Database"),
-            tr("%1 already exists.\n\nChoose another name, or open the file with File > Open "
-               "Database.")
-                .arg(QDir::toNativeSeparators(path)));
+        warn(tr("New Database"), tr("%1 already exists.").arg(QDir::toNativeSeparators(path)),
+             tr("Choose another name, or open the file with File > Open Database."));
         return;
     }
     openDatabase(path);
@@ -583,10 +580,9 @@ void MainWindow::chooseDatabase() {
 void MainWindow::openRecent(const QString& path) {
     // Opening a missing file would create an empty database in its place.
     if (!QFileInfo(path).isFile()) {
-        QMessageBox::warning(this, tr("Open Database"),
-                             tr("%1 no longer exists, so it is removed from the recent databases.\n\nIf the "
-                                "file was moved or renamed, open it with File > Open Database.")
-                                 .arg(QDir::toNativeSeparators(path)));
+        warn(tr("Open Database"), tr("%1 no longer exists.").arg(QDir::toNativeSeparators(path)),
+             tr("It is removed from the recent databases. If the file was moved or renamed, open it with "
+                "File > Open Database."));
         // After the message: the list's buttons are replaced, and the one clicked must outlive its click.
         setRecent(RecentDatabases::removed(m_recent, path));
         return;
@@ -743,7 +739,7 @@ void MainWindow::startIntake(const QString& path) {
     // Both live in the intake thread, so lines are handed over by a direct call; the rest is queued here.
     connect(m_server, &TcpServer::linesReceived, m_ingestor, &Ingestor::addLines);
     connect(m_ingestor, &Ingestor::recordsWritten, m_live, &LiveUpdater::recordsWritten);
-    connect(m_ingestor, &Ingestor::errorOccurred, this, &MainWindow::reportError);
+    connect(m_ingestor, &Ingestor::errorOccurred, this, &MainWindow::showIntakeError);
     connect(m_server, &TcpServer::errorOccurred, this, &MainWindow::showReceiverError);
     connect(m_server, &TcpServer::statsChanged, this, &MainWindow::showReceiverStats);
     m_intakeThread->start();
@@ -816,10 +812,19 @@ void MainWindow::updateReceiverAction() {
 
 void MainWindow::showReceiverError(const QString& message) {
     // A start that fails almost always means that another program holds the port.
-    reportError(
-        m_receiverStarting
-            ? tr("%1\n\nAnother program, or another LogVault window, may be using this port.").arg(message)
-            : message);
+    reportError(message,
+                m_receiverStarting
+                    ? tr("Another program, or another LogVault window, may be using this port. Close "
+                         "it, or choose another port in Receiver > Receiver Settings.")
+                    : QString());
+}
+
+void MainWindow::showIntakeError(const QString& message) {
+    // The batch is lost, but the receiver goes on: the next batches are written as usual.
+    reportError(message,
+                tr("Check that the disk has free space and that no other program locks the database "
+                   "file. The receiver keeps running, and lines that arrive later are saved as soon as "
+                   "writing works again."));
 }
 
 void MainWindow::chooseImportFiles() {
@@ -862,8 +867,10 @@ void MainWindow::showImportSummary(const ImportSummary& summary) {
                                .arg(Format::count(summary.added), Format::count(summary.unparsed),
                                     Format::duration(summary.elapsedMs));
     if (!summary.error.isEmpty()) {
-        QMessageBox::warning(this, tr("Import"),
-                             tr("The import stopped: %1\n\n%2").arg(summary.error, counts));
+        warn(tr("Import"), tr("The import stopped: %1").arg(summary.error),
+             counts + u' ' +
+                 tr("The records added so far stay in the database. Once the problem is fixed, import the "
+                    "files that were not imported yet."));
     } else if (summary.cancelled) {
         QMessageBox::information(
             this, tr("Import"),
@@ -980,7 +987,9 @@ void MainWindow::showExportSummary(const ExportSummary& summary) {
     updateActions();
     const QString nativePath = QDir::toNativeSeparators(summary.path);
     if (!summary.error.isEmpty()) {
-        QMessageBox::warning(this, tr("Export Results"), tr("The export failed: %1").arg(summary.error));
+        warn(tr("Export Results"), tr("The export failed: %1").arg(summary.error),
+             tr("No file was written. Choose another file or folder; a file that is open in another program, "
+                "such as Excel, cannot be replaced until it is closed there."));
     } else if (summary.cancelled) {
         statusBar()->showMessage(tr("The export was cancelled; %1 was not written.").arg(nativePath),
                                  kMessageTimeoutMs);
@@ -1006,21 +1015,27 @@ void MainWindow::showJobResult(const DatabaseJobResult& result) {
         if (result.error.isEmpty()) {
             switchDatabase(result.databasePath);
         } else {
-            QMessageBox::warning(this, tr("Open Database"), result.error);
+            // The database that was open stays open: it is closed only when the new one is ready.
+            warn(tr("Open Database"), result.error,
+                 m_databasePath.isEmpty()
+                     ? tr("Choose another file, or create a new database with File > New Database.")
+                     : tr("%1 stays open. Choose another file, or create a new database with File > New "
+                          "Database.")
+                           .arg(QFileInfo(m_databasePath).fileName()));
         }
         break;
     case DatabaseJobResult::Kind::RenameSource:
         search();
         if (!result.error.isEmpty()) {
-            QMessageBox::warning(this, tr("Rename Source"), result.error);
+            warn(tr("Rename Source"), result.error, tr("The source keeps its name."));
         }
         break;
     case DatabaseJobResult::Kind::DeleteSource:
         search();
         if (!result.error.isEmpty()) {
-            QMessageBox::warning(
-                this, tr("Delete Source"),
-                tr("%1\n\nRecords deleted before the error stay deleted.").arg(result.error));
+            warn(tr("Delete Source"), result.error,
+                 tr("The records deleted before the error stay deleted. Delete the source again to delete "
+                    "the rest."));
         } else if (result.cancelled) {
             statusBar()->showMessage(tr("Deleting \"%1\" was cancelled; %2 of its records were deleted.")
                                          .arg(m_jobSource, Format::count(result.deleted)),
@@ -1034,9 +1049,9 @@ void MainWindow::showJobResult(const DatabaseJobResult& result) {
     case DatabaseJobResult::Kind::DeleteOldRecords:
         search();
         if (!result.error.isEmpty()) {
-            QMessageBox::warning(
-                this, tr("Delete Old Records"),
-                tr("%1\n\nRecords deleted before the error stay deleted.").arg(result.error));
+            warn(tr("Delete Old Records"), result.error,
+                 tr("The records deleted before the error stay deleted. Run the deletion again to delete the "
+                    "rest."));
         } else if (result.cancelled) {
             statusBar()->showMessage(tr("Deleting old records was cancelled; %1 records were deleted.")
                                          .arg(Format::count(result.deleted)),
@@ -1219,15 +1234,15 @@ void MainWindow::syncStore() {
     }
     m_storeErrorShown = true;
     const QString file = QDir::toNativeSeparators(m_store.fileName());
-    QMessageBox::warning(
-        this, tr("Settings"),
-        status == QSettings::AccessError
-            ? tr("Cannot save the settings to %1: the file or its folder cannot be written "
-                 "to.\n\nChanged settings apply until LogVault is closed.")
-                  .arg(file)
-            : tr("The settings file %1 is damaged, so LogVault cannot read all of it or save "
-                 "to it.\n\nDelete the file to start with the default settings.")
-                  .arg(file));
+    if (status == QSettings::AccessError) {
+        warn(tr("Settings"), tr("Cannot save the settings to %1.").arg(file),
+             tr("The file or its folder cannot be written to. Changed settings apply until LogVault is "
+                "closed."));
+    } else {
+        warn(tr("Settings"), tr("The settings file %1 is damaged.").arg(file),
+             tr("LogVault cannot read all of it or save to it. Delete the file to start with the default "
+                "settings."));
+    }
 }
 
 void MainWindow::showAbout() {
@@ -1257,7 +1272,14 @@ void MainWindow::updateActions() {
     m_findAction->setEnabled(open);
 }
 
-void MainWindow::reportError(const QString& message) {
+void MainWindow::warn(const QString& title, const QString& text, const QString& advice) {
+    // What happened in the text, what to do about it in the smaller print below.
+    QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::Ok, this);
+    box.setInformativeText(advice);
+    box.exec();
+}
+
+void MainWindow::reportError(const QString& message, const QString& advice) {
     // Errors that come by themselves (intake, receiver) share one window, so a burst of them does not open
     // a window each.
     if (m_errorBox == nullptr) {
@@ -1267,13 +1289,15 @@ void MainWindow::reportError(const QString& message) {
     }
     if (m_errorBox->isVisible()) {
         ++m_errorsSinceShown;
-        m_errorBox->setInformativeText(tr("%1 more errors since then; the last one: %2")
-                                           .arg(Format::count(m_errorsSinceShown), message));
+        const QString more =
+            tr("%1 more errors since then; the last one: %2").arg(Format::count(m_errorsSinceShown), message);
+        m_errorBox->setInformativeText(m_errorAdvice.isEmpty() ? more : m_errorAdvice + u"\n\n"_s + more);
         return;
     }
     m_errorsSinceShown = 0;
+    m_errorAdvice = advice;
     m_errorBox->setText(message);
-    m_errorBox->setInformativeText(QString());
+    m_errorBox->setInformativeText(advice);
     m_errorBox->show();
 }
 
