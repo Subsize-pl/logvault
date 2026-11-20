@@ -7,6 +7,8 @@ qt_add_executable(lv_tests
     tst_databasejobs.h
     tst_environment.cpp
     tst_environment.h
+    tst_exporter.cpp
+    tst_exporter.h
     tst_fileimporter.cpp
     tst_filterbar.cpp
     tst_filterbar.h

@@ -203,7 +203,7 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `Ingestor` | core | Collects received lines into batches and writes them to the database. |
 | `TcpServer` | core | Listens on a port, manages connections, splits the byte stream into lines. |
 | `FileImporter` | core | Imports files in a worker thread: progress, cancel, summary. |
-| `Exporter` | core | Exports results to CSV / JSON Lines in a worker thread. |
+| `Exporter` | core | Writes every match of a search to CSV or JSON Lines in a worker thread: streaming, progress, cancel; the file appears only when it is complete. |
 | `DatabaseJobs` | core | Opens a database file (creating a new one), renames or deletes sources and deletes old records in a worker thread, one job at a time; deletions report their progress. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
@@ -573,6 +573,14 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
   separator from the regional settings (`HKCU\Control Panel\International\sList`, read via `QSettings`; `,` if missing) —
   that is what Excel expects when a CSV file is opened by double-click. Columns: time, level, source, message, fields.
   JSON Lines: one object per record.
+  - The records come newest first, like the table. `LogStore::visitRecords()` reads them one row at a time in one read
+    transaction, after counting them for the progress (`countRecords()`), so any number fits in memory.
+  - CSV: the header `Time,Level,Source,Message,Fields`; the time as the table shows it (local,
+    `yyyy-MM-dd HH:mm:ss.zzz`, which Excel reads as a date); the fields as their JSON text; CRLF after every record.
+  - JSON Lines: `{"time":"2026-11-20T11:05:01.123Z","level":"ERROR","source":"…","message":"…","fields":{…}}` — the
+    time in UTC (ISO 8601, the form the import reads back), the keys in this order, no BOM, LF after every record.
+  - The file is written through `QSaveFile`: a cancelled or failed export leaves no partial file, and a file that was
+    there before stays unchanged. The open database cannot be the target.
 - **Deletion** (a source or records older than a date) — after confirmation, in the background, in chunks of 10,000
   records, so the database is never locked for long. The matching records are counted first, so the status bar shows
   the progress after every chunk; Cancel stops after the current chunk, and the chunks deleted before stay deleted.

@@ -1,5 +1,6 @@
 #include "tst_databasejobs.h"
 #include "tst_environment.h"
+#include "tst_exporter.h"
 #include "tst_fileimporter.h"
 #include "tst_filterbar.h"
 #include "tst_intake.h"
@@ -50,6 +51,7 @@ int main(int argc, char* argv[]) {
     failed += runTests<TestSearch>(argc, argv);
     failed += runTests<TestSearchService>(argc, argv);
     failed += runTests<TestDatabaseJobs>(argc, argv);
+    failed += runTests<TestExporter>(argc, argv);
     failed += runTests<TestRecordTableModel>(argc, argv);
     failed += runTests<TestLiveUpdater>(argc, argv);
     failed += runTests<TestFilterBar>(argc, argv);
