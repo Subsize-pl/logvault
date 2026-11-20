@@ -35,6 +35,10 @@ QColor errorColor();
 /// The fixed-width font for messages and raw lines, at the size of the application font.
 QFont monospaceFont();
 
+/// The height of a table row of one line in the font or in the monospace font: the records and the
+/// statistics tables have rows of the same height.
+int tableRowHeight(const QFont& font);
+
 /// The palette with a neutral selection and alternate row color in place of the system accent color, so
 /// the level colors read well on every row, selected or not, and with gray placeholder text. Works for light
 /// and dark system palettes.

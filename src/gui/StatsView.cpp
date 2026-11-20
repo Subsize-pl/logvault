@@ -58,6 +58,9 @@ StatsView::StatsView(QWidget* parent)
     m_table->setShowGrid(false);
     m_table->setWordWrap(false);
     m_table->verticalHeader()->hide();
+    // The rows of the records table: messages in the monospace font fit, and both tables look alike.
+    m_table->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    m_table->verticalHeader()->setDefaultSectionSize(Theme::tableRowHeight(m_table->font()));
     QHeaderView* header = m_table->horizontalHeader();
     header->setSectionResizeMode(ValueColumn, QHeaderView::Stretch);
     header->setSectionResizeMode(CountColumn, QHeaderView::ResizeToContents);

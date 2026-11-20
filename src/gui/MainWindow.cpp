@@ -399,8 +399,7 @@ QTableView* MainWindow::createRecordsTable() {
     QHeaderView* rows = table->verticalHeader();
     rows->hide();
     rows->setSectionResizeMode(QHeaderView::Fixed);
-    rows->setDefaultSectionSize(
-        qMax(table->fontMetrics().height(), QFontMetrics(Theme::monospaceFont()).height()) + 6);
+    rows->setDefaultSectionSize(Theme::tableRowHeight(table->font()));
 
     QFont bold = table->font();
     bold.setBold(true);
