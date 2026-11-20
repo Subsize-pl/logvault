@@ -93,6 +93,8 @@ private:
     void showImportProgress(int percent, const QString& fileName);
     void showImportSummary(const ImportSummary& summary);
     bool canImport() const;
+    /// Asks whether to cancel a running import or export; true when none runs or the user agrees.
+    bool confirmCancellingTasks(const QString& title, const QString& proceedText);
 
     void renameSource();
     void deleteSource();
@@ -190,6 +192,7 @@ private:
     TcpServer* m_server = nullptr;
 
     QString m_databasePath; // empty while no database is open
+    bool m_closing = false; // the window is closing: results of cancelled work are ignored
     bool m_receiverListening = false;
     bool m_receiverStarting = false; // a start was asked for and its outcome has not arrived yet
     QString m_jobSource;             // the source a rename or deletion works on

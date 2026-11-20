@@ -131,6 +131,13 @@ MainWindow::MainWindow(QSettings& store, QWidget* parent)
 MainWindow::~MainWindow() { closeDatabase(); }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    if (!confirmCancellingTasks(tr("Exit"), tr("Exit Anyway"))) {
+        event->ignore();
+        return;
+    }
+    // The results of the work cancelled below still arrive through the event loop; they must neither show a
+    // message box after the window is gone nor open a database again.
+    m_closing = true;
     saveLayout();
     closeDatabase();
     event->accept();
@@ -594,6 +601,9 @@ void MainWindow::openDatabase(const QString& path) {
     if (!m_databasePath.isEmpty() && QFileInfo(path) == QFileInfo(m_databasePath)) {
         return;
     }
+    if (!confirmCancellingTasks(tr("Open Database"), tr("Open Anyway"))) {
+        return;
+    }
     // The current database stays open until the new one has been opened and checked in the background.
     if (m_jobs->open(path)) {
         showJob(tr("Opening %1...").arg(QFileInfo(path).fileName()), false);
@@ -860,6 +870,9 @@ void MainWindow::showImportProgress(int percent, const QString& fileName) {
 
 void MainWindow::showImportSummary(const ImportSummary& summary) {
     m_importTask->finish();
+    if (m_closing) {
+        return;
+    }
     updateActions();
     search();
 
@@ -881,6 +894,31 @@ void MainWindow::showImportSummary(const ImportSummary& summary) {
 }
 
 bool MainWindow::canImport() const { return !m_databasePath.isEmpty() && !m_importer->isRunning(); }
+
+bool MainWindow::confirmCancellingTasks(const QString& title, const QString& proceedText) {
+    // Closing the database cancels an import or export, so the user is asked instead of finding out later.
+    const bool importing = m_importer->isRunning();
+    const bool exporting = m_exporter->isRunning();
+    if (!importing && !exporting) {
+        return true;
+    }
+    const QString text = importing && exporting ? tr("An import and an export are still running.")
+                         : importing            ? tr("An import is still running.")
+                                                : tr("An export is still running.");
+    QStringList consequences;
+    if (importing) {
+        consequences.append(tr("The import stops; the records imported so far stay in the database."));
+    }
+    if (exporting) {
+        consequences.append(tr("The export stops and writes no file."));
+    }
+    QMessageBox question(QMessageBox::Warning, title, text, QMessageBox::Cancel, this);
+    question.setInformativeText(consequences.join(u'\n'));
+    const QAbstractButton* proceed = question.addButton(proceedText, QMessageBox::AcceptRole);
+    question.setDefaultButton(QMessageBox::Cancel);
+    question.exec();
+    return question.clickedButton() == proceed;
+}
 
 void MainWindow::renameSource() {
     const std::optional<SourceInfo> source = m_sourcesPanel->selectedSource();
@@ -984,6 +1022,9 @@ void MainWindow::chooseExportFile() {
 
 void MainWindow::showExportSummary(const ExportSummary& summary) {
     m_exportTask->finish();
+    if (m_closing) {
+        return;
+    }
     updateActions();
     const QString nativePath = QDir::toNativeSeparators(summary.path);
     if (!summary.error.isEmpty()) {
@@ -1009,6 +1050,9 @@ void MainWindow::showJob(const QString& text, bool cancellable) {
 
 void MainWindow::showJobResult(const DatabaseJobResult& result) {
     m_jobTask->finish();
+    if (m_closing) {
+        return;
+    }
     updateActions();
     switch (result.kind) {
     case DatabaseJobResult::Kind::Open:
@@ -1280,6 +1324,9 @@ void MainWindow::warn(const QString& title, const QString& text, const QString& 
 }
 
 void MainWindow::reportError(const QString& message, const QString& advice) {
+    if (m_closing) {
+        return;
+    }
     // Errors that come by themselves (intake, receiver) share one window, so a burst of them does not open
     // a window each.
     if (m_errorBox == nullptr) {

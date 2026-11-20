@@ -12,9 +12,10 @@ One stage per session, in order (see `docs/DESIGN.md` §9). Update this file at 
 | 5 | Main window | done | 2026-11-20 |
 | 6 | Analysis | done | 2026-11-20 |
 | 7 | Polish | done | 2026-11-20 |
+| 8 | Final review | done | 2026-11-20 |
 
 All stages are done (version 1.0.0). How to run the demo: the stage 7 notes below; the build and the Python client:
-`README.md`.
+`README.md`. Stage 8 (a review of the finished application) is at the end.
 
 ## Environment
 
@@ -854,7 +855,7 @@ If step 2 says the port is in use, another LogVault or program holds 5170: close
 Settings (and run the client with `--port`).
 
 **Known limitations** — Windows only, run with MSYS2 in `PATH` (no installer, by decision); JSON and plain text
-lines only; zone-less log times are local; CSV cells are not yet escaped for Excel formulas; statistics by message
+lines only; zone-less log times are local; statistics by message
 over a million records take about 1 s; `MainWindow.cpp` is long (see above).
 
 **For the author**
@@ -863,3 +864,26 @@ over a million records take about 1 s; `MainWindow.cpp` is long (see above).
   real window (replace them with your own if you like).
 - DESIGN §12 left the explanatory note (the coursework report) and the UML diagrams for after the application —
   that is the next step.
+
+### Stage 8 — Final review (2026-11-20)
+
+A review of the finished application: the code of stages 4–7 read, and the real window driven through the whole demo
+on Windows (dark and light themes) with screenshots — recent databases, receiver and live mode with the Python client,
+histogram zoom and Esc, Statistics by level and by similar messages, export to CSV (`;` from the regional settings,
+15,778 of 15,778 records) and JSON Lines, deleting records older than a date, a 500,000-line import.
+
+**Fixed**
+
+- CSV injection (DESIGN §6.7): a source, message or fields cell that starts with `=`, `+`, `-`, `@`, a tab or a CR gets
+  a leading `'`; JSON Lines is unchanged. Test `TestExporter::csvDefusesFormulas`.
+- Opening another database or closing the window while an import or export runs asks first ("Open Anyway" / "Exit
+  Anyway", Cancel by default) and says what stops and what stays (`MainWindow::confirmCancellingTasks()`).
+- Exit during an import: the "import was cancelled" box appeared after the window had gone, and the process stayed
+  alive invisibly once it was dismissed. While the window closes (`m_closing`), the import, export and job results and
+  intake errors are now ignored; the exit is clean, the database passes `PRAGMA integrity_check`.
+
+**Checks done** — no warnings, all tests pass (488 incl. the new one, 1 skipped — the performance test); every manual
+step above repeated after the fixes.
+
+**Left as is** (documented, no action needed): case-insensitive search for Latin letters only (SQLite `LIKE`); a
+running query of about a second is not interrupted when a newer search starts; `MainWindow.cpp` is long (wiring only).

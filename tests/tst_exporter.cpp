@@ -148,6 +148,36 @@ void TestExporter::csvTimesFollowTheTimeZone() {
     QCOMPARE(readFile(path), kByteOrderMark + csvText(lines));
 }
 
+void TestExporter::csvDefusesFormulas() {
+    QVERIFY(fill({
+        makeRecord(kT, Level::Info, u"web"_s, u"=HYPERLINK(\"http://x\")"_s),
+        makeRecord(kT + 1, Level::Info, u"+src"_s, u"-5 degrees"_s),
+        makeRecord(kT + 2, Level::Info, u"web"_s, u"@SUM(A1)"_s),
+        makeRecord(kT + 3, Level::Info, u"web"_s, u"a=b"_s),
+    }));
+    const QString path = filePath(u"formulas.csv"_s);
+    std::optional<ExportSummary> summary = exportTo(path, ExportFormat::Csv);
+    QVERIFY(summary);
+    QVERIFY2(summary->error.isEmpty(), qPrintable(summary->error));
+
+    // A cell from the logs that starts with = + - @ gets an apostrophe; one with it inside stays as it is.
+    const QStringList lines = {
+        u"Time,Level,Source,Message,Fields"_s,
+        localTime(kT + 3) + u",INFO,web,a=b,"_s,
+        localTime(kT + 2) + u",INFO,web,'@SUM(A1),"_s,
+        localTime(kT + 1) + u",INFO,'+src,'-5 degrees,"_s,
+        localTime(kT) + uR"csv(,INFO,web,"'=HYPERLINK(""http://x"")",)csv"_s,
+    };
+    QCOMPARE(readFile(path), kByteOrderMark + csvText(lines));
+
+    // JSON Lines keeps the text exactly.
+    const QString jsonPath = filePath(u"formulas.jsonl"_s);
+    summary = exportTo(jsonPath, ExportFormat::JsonLines);
+    QVERIFY(summary);
+    QVERIFY2(summary->error.isEmpty(), qPrintable(summary->error));
+    QVERIFY(readFile(jsonPath).contains(R"("message":"-5 degrees")"));
+}
+
 void TestExporter::jsonLinesParseBackToTheRecords() {
     const QString cyrillic = QString(QChar(0x0416)) + QChar(0x0443) + QChar(0x043A);
     const QString emoji = QString(QChar(0xD83D)) + QChar(0xDE00);
