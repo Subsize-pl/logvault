@@ -118,6 +118,7 @@ private:
     void applyTheme();
     void applyTimeZone();
     void syncStore();
+    void showAbout();
     void updateActions();
     void reportError(const QString& message);
     QString dialogDirectory() const;
@@ -142,6 +143,7 @@ private:
     QAction* m_settingsAction = nullptr;
     QAction* m_receiverSettingsAction = nullptr;
     QActionGroup* m_themeActions = nullptr;
+    QAction* m_aboutAction = nullptr;
     QMenu* m_recentMenu = nullptr;
 
     QDockWidget* m_sourcesDock = nullptr;

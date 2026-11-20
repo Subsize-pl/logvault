@@ -7,7 +7,7 @@ namespace AppInfo {
 
 QString name();
 
-/// The version from the project() call in CMakeLists.txt, e.g. "0.1.0".
+/// The version from the project() call in CMakeLists.txt, e.g. "1.0.0".
 QString version();
 
 } // namespace AppInfo

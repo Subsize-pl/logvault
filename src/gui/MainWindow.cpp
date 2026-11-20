@@ -213,6 +213,9 @@ void MainWindow::createActions() {
 
     m_settingsAction = new QAction(tr("&Settings..."), this);
     connect(m_settingsAction, &QAction::triggered, this, [this] { showSettings(false); });
+    m_aboutAction = new QAction(tr("&About %1").arg(AppInfo::name()), this);
+    connect(m_aboutAction, &QAction::triggered, this, &MainWindow::showAbout);
+
     m_receiverSettingsAction = new QAction(tr("Receiver &Settings..."), this);
     connect(m_receiverSettingsAction, &QAction::triggered, this, [this] { showSettings(true); });
 
@@ -286,6 +289,9 @@ void MainWindow::createMenus() {
     view->addSeparator();
     view->addMenu(tr("&Theme"))->addActions(m_themeActions->actions());
     view->addAction(m_settingsAction);
+
+    QMenu* help = menuBar()->addMenu(tr("&Help"));
+    help->addAction(m_aboutAction);
 }
 
 void MainWindow::createToolBar() {
@@ -1223,6 +1229,14 @@ void MainWindow::syncStore() {
             : tr("The settings file %1 is damaged, so LogVault cannot read all of it or save "
                  "to it.\n\nDelete the file to start with the default settings.")
                   .arg(file));
+}
+
+void MainWindow::showAbout() {
+    // The box shows the application icon.
+    QMessageBox::about(this, tr("About %1").arg(AppInfo::name()),
+                       tr("<h3>%1 %2</h3><p>Receives logs over TCP and from files, stores them in SQLite and "
+                          "lets you search, filter and analyze them.</p><p>Qt %3</p>")
+                           .arg(AppInfo::name(), AppInfo::version(), QString::fromLatin1(qVersion())));
 }
 
 void MainWindow::updateActions() {

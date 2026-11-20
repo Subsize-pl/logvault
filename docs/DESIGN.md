@@ -188,7 +188,10 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
   Lines exports always use UTC with `Z`; log lines without a zone are read as local time (§5.4) whatever the setting.
 - Icons: standard `QStyle::standardIcon` where they read in both themes. Import, export, start/stop receiver and live
   are glyphs drawn in the palette's colors (`Theme::glyphIcon()`): the standard ones are dark pixmaps that vanish on a
-  dark toolbar. The application icon is custom.
+  dark toolbar. The application icon is custom: a dark slate tile with three log lines marked green, amber and red
+  (`src/gui/resources/logvault.ico`, all sizes up to 256 px, and `logvault.png`), drawn once with `QPainter`; it is the
+  window icon (`resources.qrc`) and the icon of the .exe (`LogVault.rc`). Help → About shows it with the name, the
+  version from `AppInfo` and the Qt version.
 
 ---
 
@@ -638,7 +641,7 @@ logvault/
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
 │                   ImportDialog, DeleteRecordsDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel,
 │                   StatsView, TaskStatus, LiveUpdater, Settings, SettingsDialog, Theme, Format,
-│                   resources.qrc (application icon)
+│                   resources/ + resources.qrc + LogVault.rc (application icon)
 ├── tests/          tst_*.cpp (Qt Test)
 ├── examples/       python_client.py
 ├── docs/           DESIGN.md, PROGRESS.md

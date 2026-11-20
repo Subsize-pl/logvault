@@ -3,6 +3,7 @@
 #include "Theme.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QSettings>
 #include <QStyleHints>
 
@@ -11,6 +12,8 @@ int main(int argc, char* argv[]) {
     QApplication::setOrganizationName(AppInfo::name());
     QApplication::setApplicationName(AppInfo::name());
     QApplication::setApplicationVersion(AppInfo::version());
+    // Every window and the About box show it; the .exe has the same icon from LogVault.rc.
+    QApplication::setWindowIcon(QIcon(QStringLiteral(":/icons/logvault.ico")));
     // %APPDATA%\LogVault\LogVault.ini rather than the registry: easy to read, copy or delete.
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings store;
