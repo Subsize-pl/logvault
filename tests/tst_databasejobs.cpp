@@ -195,6 +195,61 @@ void TestDatabaseJobs::cancelKeepsSourceAndRemainingRecords() {
     QCOMPARE(*counts, expected);
 }
 
+void TestDatabaseJobs::deletesOldRecordsWithProgress() {
+    // Times 1000 to 1000 + count - 1 in each source.
+    constexpr int kRecords = LogStore::kDeleteChunkSize + 200;
+    QVERIFY(fill({u"cart"_s, u"payment"_s}, kRecords));
+    const std::optional<qint64> cartId = sourceId(databasePath(), u"cart"_s);
+    QVERIFY(cartId);
+
+    DatabaseJobs jobs;
+    QSignalSpy finished(&jobs, &DatabaseJobs::finished);
+    // The signal comes from the pool thread; a context object in this thread queues it here.
+    QObject context;
+    QList<int> percents;
+    connect(&jobs, &DatabaseJobs::progressChanged, &context,
+            [&percents](int percent) { percents.append(percent); });
+
+    std::optional<DatabaseJobResult> result =
+        waitForJob(finished, jobs.deleteRecordsOlderThan(databasePath(), 1000 + 100, 0));
+    QVERIFY(result);
+    QCOMPARE(result->kind, DatabaseJobResult::Kind::DeleteOldRecords);
+    QVERIFY2(result->error.isEmpty(), qPrintable(result->error));
+    QCOMPARE(result->deleted, 200);
+    QVERIFY(!result->cancelled);
+    QHash<QString, qint64> expected = {{u"cart"_s, kRecords - 100}, {u"payment"_s, kRecords - 100}};
+    QCOMPARE(sourceCounts(databasePath()).value(), expected);
+    QCOMPARE(percents, (QList<int>{0, 100}));
+
+    // One source only, over two chunks.
+    percents.clear();
+    result = waitForJob(finished, jobs.deleteRecordsOlderThan(databasePath(), 1000 + kRecords, *cartId));
+    QVERIFY(result);
+    QVERIFY2(result->error.isEmpty(), qPrintable(result->error));
+    QCOMPARE(result->deleted, kRecords - 100);
+    // Emptied sources stay.
+    expected = {{u"cart"_s, 0}, {u"payment"_s, kRecords - 100}};
+    QCOMPARE(sourceCounts(databasePath()).value(), expected);
+    QCOMPARE(percents, (QList<int>{0, LogStore::kDeleteChunkSize * 100 / (kRecords - 100), 100}));
+}
+
+void TestDatabaseJobs::cancelKeepsOldRecordsNotReached() {
+    constexpr int kRecords = 3 * LogStore::kDeleteChunkSize;
+    QVERIFY(fill({u"big"_s}, kRecords));
+
+    DatabaseJobs jobs;
+    QSignalSpy finished(&jobs, &DatabaseJobs::finished);
+    const bool started = jobs.deleteRecordsOlderThan(databasePath(), 1000 + kRecords, 0);
+    jobs.cancel();
+    const std::optional<DatabaseJobResult> result = waitForJob(finished, started);
+    QVERIFY(result);
+    QVERIFY2(result->error.isEmpty(), qPrintable(result->error));
+    QVERIFY(result->cancelled);
+    QVERIFY(result->deleted < kRecords);
+    const QHash<QString, qint64> expected = {{u"big"_s, kRecords - result->deleted}};
+    QCOMPARE(sourceCounts(databasePath()).value(), expected);
+}
+
 void TestDatabaseJobs::runsOneJobAtATime() {
     DatabaseJobs jobs;
     QSignalSpy finished(&jobs, &DatabaseJobs::finished);

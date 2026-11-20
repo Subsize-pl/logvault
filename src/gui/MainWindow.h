@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DatabaseJobs.h"
+#include "Exporter.h"
 #include "FileImporter.h"
 #include "SearchService.h"
 #include "TcpServer.h"
@@ -10,13 +11,13 @@
 #include <QStringList>
 
 class FilterBar;
+class HistogramWidget;
 class Ingestor;
 class LiveUpdater;
 class QAction;
 class QDockWidget;
 class QLabel;
 class QMessageBox;
-class QProgressBar;
 class QPushButton;
 class QStackedWidget;
 class QTabWidget;
@@ -27,6 +28,8 @@ class RecordDetailsPanel;
 class RecordTableModel;
 class ReceiverPanel;
 class SourcesPanel;
+class StatsView;
+class TaskStatus;
 
 /// The application's main window (DESIGN.md section 2): menus, panels, the filters and the records table.
 /// It wires the widgets to the core objects and owns the threads of the open database; the work itself is
@@ -79,9 +82,14 @@ private:
 
     void renameSource();
     void deleteSource();
+    void deleteOldRecords();
     void showJob(const QString& text, bool cancellable);
     void showJobResult(const DatabaseJobResult& result);
 
+    void chooseExportFile();
+    void showExportSummary(const ExportSummary& summary);
+
+    SearchRequest currentFilters() const;
     void search();
     void showSearchResult(const SearchResult& result);
 
@@ -100,9 +108,11 @@ private:
     QAction* m_newAction = nullptr;
     QAction* m_openAction = nullptr;
     QAction* m_importAction = nullptr;
+    QAction* m_exportAction = nullptr;
     QAction* m_exitAction = nullptr;
     QAction* m_renameSourceAction = nullptr;
     QAction* m_deleteSourceAction = nullptr;
+    QAction* m_deleteOldAction = nullptr;
     QAction* m_receiverAction = nullptr;
     QAction* m_liveAction = nullptr;
     QAction* m_refreshAction = nullptr;
@@ -119,16 +129,16 @@ private:
     QWidget* m_placeholderPage = nullptr;
     QWidget* m_workspacePage = nullptr;
     FilterBar* m_filterBar = nullptr;
+    HistogramWidget* m_histogram = nullptr;
     QTabWidget* m_tabs = nullptr;
     QTableView* m_table = nullptr;
+    StatsView* m_statsView = nullptr;
     RecordTableModel* m_records;
 
     QLabel* m_searchStatus = nullptr;
-    QLabel* m_jobStatus = nullptr;
-    QPushButton* m_jobCancel = nullptr;
-    QLabel* m_importStatus = nullptr;
-    QProgressBar* m_importProgress = nullptr;
-    QPushButton* m_importCancel = nullptr;
+    TaskStatus* m_jobTask = nullptr;
+    TaskStatus* m_importTask = nullptr;
+    TaskStatus* m_exportTask = nullptr;
     QLabel* m_liveStatus = nullptr;
     QMessageBox* m_errorBox = nullptr;
     int m_errorsSinceShown = 0;
@@ -136,6 +146,7 @@ private:
     SearchService* m_searchService;
     DatabaseJobs* m_jobs;
     FileImporter* m_importer;
+    Exporter* m_exporter;
     LiveUpdater* m_live;
     QTimer* m_searchingTimer;
 

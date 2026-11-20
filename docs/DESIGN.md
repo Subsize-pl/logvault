@@ -167,11 +167,18 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 
 ### 2.4. Look and feel
 
-- `Fusion` style; theme: system (Qt 6.5+ follows the Windows theme), light or dark — via `QPalette`.
+- `Fusion` style; theme: system (Qt 6.5+ follows the Windows theme), light or dark — via `QPalette`. The selection and
+  the alternate rows use neutral slate grays instead of the Windows accent color (`Theme::neutralPalette()`), so the
+  level colors read well on every row; placeholder text is gray (the dark Windows palette makes it white).
 - Level colors are constants in one place (`gui/Theme`), shared by the table, the level buttons and the histogram:
   TRACE `#8A8F98`, DEBUG `#5B7083`, INFO `#2E7D32`, WARN `#E0A100`, ERROR `#D32F2F`, FATAL `#7B1FA2`, UNKNOWN `#9E9E9E`.
+  As text (the table, the record details, the statistics, the level buttons) a level color is lightened or darkened in
+  its own hue until it has a contrast of 4.5:1 with the background (`Theme::levelTextColor()`); bars and filled buttons
+  use the colors as they are.
 - Monospace font for messages and raw lines; numbers with thousands separators.
-- Icons: standard `QStyle::standardIcon`; only the application icon is custom.
+- Icons: standard `QStyle::standardIcon` where they read in both themes. Import, export, start/stop receiver and live
+  are glyphs drawn in the palette's colors (`Theme::glyphIcon()`): the standard ones are dark pixmaps that vanish on a
+  dark toolbar. The application icon is custom.
 
 ---
 
@@ -197,17 +204,18 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `LineParser` | core | Line → `Record`: JSON or plain text, fields. Stateless (`LogStore` computes `msg_key`). |
 | `LineSplitter` | core | Splits a byte stream into lines: line breaks, blank lines, the 64 KB limit. Shared by `TcpServer` and `FileImporter`. |
 | `Database` | core | Opens a connection in the current thread, applies SQLite settings, creates the schema. |
-| `LogStore` | core | All SQL: batch insert, sources, search, histogram, statistics, deletion. The only place with SQL. |
+| `LogStore` | core | All SQL: batch insert, sources, search (also a streaming read of every match, for the export), histogram, statistics, chunked deletion with progress. The only place with SQL. |
 | `SearchQuery` | core | Filters + search line → `WHERE` clause and bound values (§6). |
 | `SearchService` | core | Runs searches in a worker thread and delivers results via a signal. |
 | `Ingestor` | core | Collects received lines into batches and writes them to the database. |
 | `TcpServer` | core | Listens on a port, manages connections, splits the byte stream into lines. |
 | `FileImporter` | core | Imports files in a worker thread: progress, cancel, summary. |
-| `Exporter` | core | Exports results to CSV / JSON Lines in a worker thread. |
-| `DatabaseJobs` | core | Opens a database file (creating a new one) and renames or deletes sources in a worker thread, one job at a time. |
+| `Exporter` | core | Writes every match of a search to CSV or JSON Lines in a worker thread: streaming, progress, cancel; the file appears only when it is complete. |
+| `DatabaseJobs` | core | Opens a database file (creating a new one), renames or deletes sources and deletes old records in a worker thread, one job at a time; deletions report their progress. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
-| `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, colors and palettes, how numbers and times are written. |
+| `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `DeleteRecordsDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, which old records to delete, colors, palettes and toolbar glyphs, how numbers and times are written. |
+| `TaskStatus` | gui | A background task in the status bar (import, export, a database job): text, progress, Cancel. |
 | `LiveUpdater` | gui | Decides when live mode refreshes the search (§6.6); no widgets, so it is tested on its own. |
 
 ### 3.3. Threads
@@ -546,8 +554,15 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
   aligned down to a multiple of the step, counted from 1970-01-01 UTC.
 - The bars cover the period of the search. "All time" and other open-ended periods end at the oldest or the newest
   match; a bounded period without matches still gets its empty bars, so the time axis stays.
-- Bars are stacked by level using the `Theme` colors; the tooltip shows the interval and per-level counts.
-- Drag-select → the "Custom range" period from the selection bounds → a new search. Esc restores the previous period.
+- Bars are stacked by level using the `Theme` colors, the most severe at the bottom (FATAL, ERROR, … UNKNOWN), so a
+  spike of errors stands on the axis; the tooltip shows the interval and per-level counts. The scale is labeled with
+  the count of the fullest bar.
+- Time labels sit on round local times (14:00, 14:15) at a spacing that fits the bars, as precise as that spacing
+  (`HH:mm:ss`, `HH:mm`, `MMM d`, `yyyy-MM-dd`); a label at local midnight shows the date. Day bars start at UTC midnight,
+  so their labels sit on round UTC times. The widget paints the histogram of the last `SearchResult` only.
+- Drag-select → the "Custom range" period from the selection bounds → a new search. The selection snaps to whole bars;
+  a click selects nothing (it gives the histogram the focus). Esc restores the previous period: `FilterBar` remembers
+  the periods before the last 50 zooms and steps back one per Esc; choosing a period in the combo box forgets them.
 
 ### 6.5. Statistics
 
@@ -557,6 +572,10 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
 - Double-click: level → keep only that level; source → select that source; field → add `field:value` to the search line
   (`-field:*` for the "(no field)" row); similar message → add the longest `#`-free part of the pattern, in quotes, to
   the search line.
+- The statistics are asked for (`statsMode`) only while the tab is shown; showing it starts a search. Grouping by a
+  field asks for nothing until the name is valid, so a half-typed name never fails the search. The summary says how
+  many groups of how many matches (or "the 100 largest groups"). While the groups stay the same (live mode), only the
+  numbers change, so the selection and the scroll position stay.
 
 ### 6.6. Live mode
 
@@ -573,8 +592,23 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
   separator from the regional settings (`HKCU\Control Panel\International\sList`, read via `QSettings`; `,` if missing) —
   that is what Excel expects when a CSV file is opened by double-click. Columns: time, level, source, message, fields.
   JSON Lines: one object per record.
+  - The records come newest first, like the table. `LogStore::visitRecords()` reads them one row at a time in one read
+    transaction, after counting them for the progress (`countRecords()`), so any number fits in memory.
+  - CSV: the header `Time,Level,Source,Message,Fields`; the time as the table shows it (local,
+    `yyyy-MM-dd HH:mm:ss.zzz`, which Excel reads as a date); the fields as their JSON text; CRLF after every record.
+  - JSON Lines: `{"time":"2026-11-20T11:05:01.123Z","level":"ERROR","source":"…","message":"…","fields":{…}}` — the
+    time in UTC (ISO 8601, the form the import reads back), the keys in this order, no BOM, LF after every record.
+  - The file is written through `QSaveFile`: a cancelled or failed export leaves no partial file, and a file that was
+    there before stays unchanged. The open database cannot be the target.
+  - File → Export Results… (Ctrl+E, also on the toolbar) asks for the file; its extension (`.csv`, `.jsonl`) or the
+    chosen filter decides the format. The export uses the filters in effect, without the table's row limit. Progress
+    and Cancel are in the status bar; the outcome is a status bar message, an error a message box.
 - **Deletion** (a source or records older than a date) — after confirmation, in the background, in chunks of 10,000
-  records, so the database is never locked for long.
+  records, so the database is never locked for long. The matching records are counted first, so the status bar shows
+  the progress after every chunk; Cancel stops after the current chunk, and the chunks deleted before stay deleted.
+  Sources emptied by deleting old records stay.
+  - Data → Delete Records Older Than… asks for a date and time (a month ago by default) and all sources or one (the one
+    selected in the Sources panel at first), then for confirmation; the search refreshes when the job ends.
 
 ---
 
@@ -590,8 +624,8 @@ logvault/
 │   ├── core/       Record, TimeParser, LineParser, Database, LogStore, SearchQuery, SearchService,
 │   │               DatabaseJobs, LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
-│                   ImportDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView,
-│                   LiveUpdater, SettingsDialog, Theme, Format, resources.qrc (application icon)
+│                   ImportDialog, DeleteRecordsDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel,
+│                   StatsView, TaskStatus, LiveUpdater, SettingsDialog, Theme, Format, resources.qrc (application icon)
 ├── tests/          tst_*.cpp (Qt Test)
 ├── examples/       python_client.py
 ├── docs/           DESIGN.md, PROGRESS.md

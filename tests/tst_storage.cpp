@@ -498,6 +498,34 @@ void TestStorage::deleteOlderThanIsStrict() {
     QCOMPARE(store.sources().value().size(), 2);
 }
 
+void TestStorage::deletionReportsProgress() {
+    constexpr int kOld = LogStore::kDeleteChunkSize * 2 + 300;
+    Database db;
+    QVERIFY2(db.open(databasePath()), qPrintable(db.errorString()));
+    LogStore store(db);
+    QVERIFY2(store.insertBatch(makeBatch(kOld, 0, QStringLiteral("api"))), qPrintable(store.errorString()));
+    QVERIFY2(store.insertBatch(makeBatch(50, kOld, QStringLiteral("api"))), qPrintable(store.errorString()));
+
+    // Before the first chunk and after each one, with the number of records that matched at the start.
+    QList<std::pair<qint64, qint64>> calls;
+    const auto record = [&calls](qint64 deleted, qint64 total) { calls.append({deleted, total}); };
+    QCOMPARE(store.deleteRecordsOlderThan(kOld, 0, nullptr, record).value_or(-1), kOld);
+    const QList<std::pair<qint64, qint64>> expected = {
+        {0, kOld}, {LogStore::kDeleteChunkSize, kOld}, {2 * LogStore::kDeleteChunkSize, kOld}, {kOld, kOld}};
+    QCOMPARE(calls, expected);
+
+    // Deleting a source reports the same way.
+    calls.clear();
+    const qint64 id = findSource(store.sources().value(), QStringLiteral("api")).id;
+    QCOMPARE(store.deleteSource(id, nullptr, record).value_or(-1), 50);
+    QCOMPARE(calls, (QList<std::pair<qint64, qint64>>{{0, 50}, {50, 50}}));
+
+    // Nothing to delete: one call at the start and one after the empty chunk.
+    calls.clear();
+    QCOMPARE(store.deleteRecordsOlderThan(kOld, 0, nullptr, record).value_or(-1), 0);
+    QCOMPARE(calls, (QList<std::pair<qint64, qint64>>{{0, 0}, {0, 0}}));
+}
+
 void TestStorage::unicodeRoundTrip() {
     Database db;
     QVERIFY2(db.open(databasePath()), qPrintable(db.errorString()));

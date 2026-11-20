@@ -3,6 +3,8 @@
 #include "Format.h"
 #include "Theme.h"
 
+#include <QGuiApplication>
+#include <QPalette>
 #include <QStringList>
 
 #include <algorithm>
@@ -51,7 +53,8 @@ QVariant RecordTableModel::data(const QModelIndex& index, int role) const {
         return displayText(record, index.column());
     case Qt::ForegroundRole:
         if (index.column() == LevelColumn) {
-            return Theme::levelColor(record.level);
+            // Selected rows use the palette's highlighted text instead, which reads on the selection color.
+            return Theme::levelTextColor(record.level, QGuiApplication::palette().color(QPalette::Base));
         }
         break;
     case Qt::FontRole:

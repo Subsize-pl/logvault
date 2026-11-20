@@ -38,14 +38,17 @@ bool DatabaseJobs::renameSource(const QString& databasePath, qint64 sourceId, co
 bool DatabaseJobs::deleteSource(const QString& databasePath, qint64 sourceId) {
     return start(DatabaseJobResult::Kind::DeleteSource, databasePath,
                  [this, sourceId](LogStore& store, DatabaseJobResult& result) {
-                     const std::optional<qint64> deleted = store.deleteSource(sourceId, &m_cancel);
-                     if (!deleted) {
-                         result.error = store.errorString();
-                         return;
-                     }
-                     result.deleted = *deleted;
-                     // LogStore stops between chunks when the flag is set and keeps the source then.
-                     result.cancelled = m_cancel.load();
+                     storeDeletion(store.deleteSource(sourceId, &m_cancel, progressReporter()), store,
+                                   result);
+                 });
+}
+
+bool DatabaseJobs::deleteRecordsOlderThan(const QString& databasePath, qint64 before, qint64 sourceId) {
+    return start(DatabaseJobResult::Kind::DeleteOldRecords, databasePath,
+                 [this, before, sourceId](LogStore& store, DatabaseJobResult& result) {
+                     storeDeletion(
+                         store.deleteRecordsOlderThan(before, sourceId, &m_cancel, progressReporter()), store,
+                         result);
                  });
 }
 
@@ -54,6 +57,24 @@ void DatabaseJobs::cancel() { m_cancel = true; }
 bool DatabaseJobs::isRunning() const { return m_running; }
 
 void DatabaseJobs::waitForFinished() { m_watcher.waitForFinished(); }
+
+LogStore::DeleteProgress DatabaseJobs::progressReporter() {
+    return [this](qint64 deleted, qint64 total) {
+        // Records written while the deletion runs can match too, so the share is capped.
+        emit progressChanged(total > 0 ? static_cast<int>(qMin<qint64>(deleted * 100 / total, 100)) : 100);
+    };
+}
+
+void DatabaseJobs::storeDeletion(const std::optional<qint64>& deleted, const LogStore& store,
+                                 DatabaseJobResult& result) const {
+    if (!deleted) {
+        result.error = store.errorString();
+        return;
+    }
+    result.deleted = *deleted;
+    // LogStore stops between chunks when the flag is set (and keeps the source then).
+    result.cancelled = m_cancel.load();
+}
 
 bool DatabaseJobs::start(DatabaseJobResult::Kind kind, const QString& databasePath, Work work) {
     if (m_running) {

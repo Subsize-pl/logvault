@@ -7,10 +7,14 @@ qt_add_executable(lv_tests
     tst_databasejobs.h
     tst_environment.cpp
     tst_environment.h
+    tst_exporter.cpp
+    tst_exporter.h
     tst_fileimporter.cpp
     tst_filterbar.cpp
     tst_filterbar.h
     tst_fileimporter.h
+    tst_histogram.cpp
+    tst_histogram.h
     tst_intake.cpp
     tst_intake.h
     tst_lineparser.cpp
@@ -33,6 +37,8 @@ qt_add_executable(lv_tests
     tst_searchservice.h
     tst_storage.cpp
     tst_storage.h
+    tst_theme.cpp
+    tst_theme.h
     tst_timeparser.cpp
     tst_timeparser.h
 )

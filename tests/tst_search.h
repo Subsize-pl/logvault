@@ -18,6 +18,8 @@ private slots:
 
     void ordersNewestFirst();
     void limitsRows();
+    void visitsEveryMatchNewestFirst();
+    void countsMatches();
     void findsTheSpanOfMatches();
     void searchLineMatchesRecords_data();
     void searchLineMatchesRecords();

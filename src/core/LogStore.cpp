@@ -19,6 +19,15 @@ QString whereClause(const SqlFragment& condition) {
     return condition.sql.isEmpty() ? QString() : QStringLiteral("WHERE ") + condition.sql;
 }
 
+// The records matching a condition, newest first; readRecord() reads its rows. Records with the same time
+// come in reverse insertion order, which the time index gives without sorting (it ends with the rowid).
+QString selectRecords(const SqlFragment& condition) {
+    return QStringLiteral("SELECT r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw "
+                          "FROM records r JOIN sources s ON s.id = r.source_id %1 "
+                          "ORDER BY r.ts DESC, r.id DESC")
+        .arg(whereClause(condition));
+}
+
 // Reads the columns r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw of the current row.
 Record readRecord(const QSqlQuery& query) {
     Record record;
@@ -115,8 +124,10 @@ bool LogStore::renameSource(qint64 id, const QString& name) {
     return failWith(tr("Cannot rename the source"));
 }
 
-std::optional<qint64> LogStore::deleteSource(qint64 id, const std::atomic<bool>* cancel) {
-    const std::optional<qint64> deleted = deleteInChunks(QStringLiteral("source_id = ?"), {id}, cancel);
+std::optional<qint64> LogStore::deleteSource(qint64 id, const std::atomic<bool>* cancel,
+                                             const DeleteProgress& progress) {
+    const std::optional<qint64> deleted =
+        deleteInChunks(QStringLiteral("source_id = ?"), {id}, cancel, progress);
     if (!deleted) {
         failWith(tr("Cannot delete the source"));
         return std::nullopt;
@@ -134,18 +145,23 @@ std::optional<qint64> LogStore::deleteSource(qint64 id, const std::atomic<bool>*
 }
 
 std::optional<qint64> LogStore::deleteRecordsOlderThan(qint64 ts, qint64 sourceId,
-                                                       const std::atomic<bool>* cancel) {
+                                                       const std::atomic<bool>* cancel,
+                                                       const DeleteProgress& progress) {
     const std::optional<qint64> deleted =
-        sourceId == 0 ? deleteInChunks(QStringLiteral("ts < ?"), {ts}, cancel)
-                      : deleteInChunks(QStringLiteral("source_id = ? AND ts < ?"), {sourceId, ts}, cancel);
+        sourceId == 0
+            ? deleteInChunks(QStringLiteral("ts < ?"), {ts}, cancel, progress)
+            : deleteInChunks(QStringLiteral("source_id = ? AND ts < ?"), {sourceId, ts}, cancel, progress);
     if (!deleted) {
         failWith(tr("Cannot delete old records"));
     }
     return deleted;
 }
 
-std::optional<qint64> LogStore::recordCount() {
-    const std::optional<QVariant> count = selectValue(QStringLiteral("SELECT count(*) FROM records"));
+std::optional<qint64> LogStore::recordCount() { return countRecords({}); }
+
+std::optional<qint64> LogStore::countRecords(const SqlFragment& condition) {
+    const std::optional<QVariant> count = selectValue(
+        QStringLiteral("SELECT count(*) FROM records r %1").arg(whereClause(condition)), condition.values);
     if (!count) {
         failWith(tr("Cannot count records"));
         return std::nullopt;
@@ -174,12 +190,9 @@ void LogStore::endRead() {
 std::optional<QVector<Record>> LogStore::findRecords(const SqlFragment& condition, int limit) {
     QSqlQuery query(m_db);
     query.setForwardOnly(true);
-    const QString sql = QStringLiteral("SELECT r.id, r.ts, r.level, s.name, r.message, r.fields, r.raw "
-                                       "FROM records r JOIN sources s ON s.id = r.source_id %1 "
-                                       "ORDER BY r.ts DESC, r.id DESC LIMIT ?")
-                            .arg(whereClause(condition));
     // A negative LIMIT means "no limit" in SQLite.
-    if (!execute(query, sql, condition.values + QVariantList{qMax(0, limit)})) {
+    if (!execute(query, selectRecords(condition) + QStringLiteral(" LIMIT ?"),
+                 condition.values + QVariantList{qMax(0, limit)})) {
         failWith(tr("Cannot read records"));
         return std::nullopt;
     }
@@ -193,6 +206,25 @@ std::optional<QVector<Record>> LogStore::findRecords(const SqlFragment& conditio
         return std::nullopt;
     }
     return result;
+}
+
+bool LogStore::visitRecords(const SqlFragment& condition, const std::function<bool(const Record&)>& visit) {
+    // A forward-only query keeps no rows: SQLite produces each one when next() asks for it.
+    QSqlQuery query(m_db);
+    query.setForwardOnly(true);
+    if (!execute(query, selectRecords(condition), condition.values)) {
+        return failWith(tr("Cannot read records"));
+    }
+    while (query.next()) {
+        if (!visit(readRecord(query))) {
+            return true;
+        }
+    }
+    if (query.lastError().isValid()) {
+        setError(query);
+        return failWith(tr("Cannot read records"));
+    }
+    return true;
 }
 
 std::optional<MatchSpan> LogStore::matchSpan(const SqlFragment& condition) {
@@ -450,13 +482,27 @@ bool LogStore::changeSourceName(qint64 id, const QString& name) {
 }
 
 std::optional<qint64> LogStore::deleteInChunks(const QString& condition, const QVariantList& values,
-                                               const std::atomic<bool>* cancel) {
+                                               const std::atomic<bool>* cancel,
+                                               const DeleteProgress& progress) {
     // The condition is a fixed fragment written in this class; every value is bound.
     const QString sql =
         QStringLiteral("DELETE FROM records WHERE id IN (SELECT id FROM records WHERE %1 LIMIT ?)")
             .arg(condition);
     QVariantList chunkValues = values;
     chunkValues.append(kDeleteChunkSize);
+
+    // Counted once, before the first chunk: the number only scales the progress, so records written
+    // meanwhile need not be in it.
+    qint64 total = 0;
+    if (progress) {
+        const std::optional<QVariant> count =
+            selectValue(QStringLiteral("SELECT count(*) FROM records WHERE %1").arg(condition), values);
+        if (!count) {
+            return std::nullopt;
+        }
+        total = count->toLongLong();
+        progress(0, total);
+    }
 
     QSqlQuery query(m_db);
     qint64 deleted = 0;
@@ -474,6 +520,9 @@ std::optional<qint64> LogStore::deleteInChunks(const QString& condition, const Q
             return std::nullopt;
         }
         deleted += chunk;
+        if (progress) {
+            progress(deleted, total);
+        }
         if (chunk < kDeleteChunkSize) {
             break;
         }

@@ -1,7 +1,9 @@
 #include "tst_databasejobs.h"
 #include "tst_environment.h"
+#include "tst_exporter.h"
 #include "tst_fileimporter.h"
 #include "tst_filterbar.h"
+#include "tst_histogram.h"
 #include "tst_intake.h"
 #include "tst_lineparser.h"
 #include "tst_linesplitter.h"
@@ -13,6 +15,7 @@
 #include "tst_searchquery.h"
 #include "tst_searchservice.h"
 #include "tst_storage.h"
+#include "tst_theme.h"
 #include "tst_timeparser.h"
 
 #include <QApplication>
@@ -50,9 +53,12 @@ int main(int argc, char* argv[]) {
     failed += runTests<TestSearch>(argc, argv);
     failed += runTests<TestSearchService>(argc, argv);
     failed += runTests<TestDatabaseJobs>(argc, argv);
+    failed += runTests<TestExporter>(argc, argv);
     failed += runTests<TestRecordTableModel>(argc, argv);
     failed += runTests<TestLiveUpdater>(argc, argv);
     failed += runTests<TestFilterBar>(argc, argv);
+    failed += runTests<TestHistogram>(argc, argv);
     failed += runTests<TestPanels>(argc, argv);
+    failed += runTests<TestTheme>(argc, argv);
     return failed == 0 ? 0 : 1;
 }

@@ -13,6 +13,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <functional>
 #include <optional>
 
 class Database;
@@ -43,6 +44,10 @@ public:
     /// Statistics rows at most when grouping by message or by field.
     static constexpr int kStatsRowLimit = 100;
 
+    /// Called before the first chunk of a deletion and after each one, with the records deleted so far and
+    /// the number that matched when the deletion started.
+    using DeleteProgress = std::function<void(qint64 deleted, qint64 total)>;
+
     /// The database must be open.
     explicit LogStore(Database& database);
 
@@ -62,15 +67,22 @@ public:
 
     /// Deletes the records of the source in chunks of kDeleteChunkSize, then the source itself, and returns
     /// the number of records deleted. When *cancel becomes true, stops after the current chunk and keeps the
-    /// source. On error returns nullopt; chunks deleted before the error stay deleted.
-    std::optional<qint64> deleteSource(qint64 id, const std::atomic<bool>* cancel = nullptr);
+    /// source. On error returns nullopt; chunks deleted before the error stay deleted. With a progress
+    /// callback, the records are counted first.
+    std::optional<qint64> deleteSource(qint64 id, const std::atomic<bool>* cancel = nullptr,
+                                       const DeleteProgress& progress = {});
 
     /// Deletes records with a time strictly before ts (of one source if sourceId is not 0) in chunks, like
     /// deleteSource(), and returns their number. Sources are kept even when they become empty.
     std::optional<qint64> deleteRecordsOlderThan(qint64 ts, qint64 sourceId = 0,
-                                                 const std::atomic<bool>* cancel = nullptr);
+                                                 const std::atomic<bool>* cancel = nullptr,
+                                                 const DeleteProgress& progress = {});
 
     std::optional<qint64> recordCount();
+
+    /// The number of records matching a condition built by SearchQuery. It reads every match, so a search
+    /// counts with the histogram instead (DESIGN.md section 6.3).
+    std::optional<qint64> countRecords(const SqlFragment& condition);
 
     /// Starts a read transaction: the queries until endRead() see one state of the database, even while
     /// other connections write.
@@ -80,6 +92,11 @@ public:
     /// The records matching a condition built by SearchQuery, newest first (by time, then by insertion
     /// order), at most limit of them.
     std::optional<QVector<Record>> findRecords(const SqlFragment& condition, int limit);
+
+    /// Passes every record matching a condition to visit, in the order of findRecords(), until visit returns
+    /// false. The rows are read one at a time, so any number of them can be visited. Returns false only when
+    /// reading fails.
+    bool visitRecords(const SqlFragment& condition, const std::function<bool(const Record&)>& visit);
 
     /// The times of the oldest and the newest match. Cheap unless matches are rare: each end is found by
     /// walking the time index from that side up to the first match.
@@ -108,7 +125,7 @@ private:
     std::optional<qint64> sourceIdFor(const QString& name, QHash<QString, qint64>& cache);
     bool changeSourceName(qint64 id, const QString& name);
     std::optional<qint64> deleteInChunks(const QString& condition, const QVariantList& values,
-                                         const std::atomic<bool>* cancel);
+                                         const std::atomic<bool>* cancel, const DeleteProgress& progress);
 
     bool beginWrite();
     bool commit();

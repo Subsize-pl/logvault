@@ -335,6 +335,53 @@ void TestSearch::limitsRows() {
     QVERIFY(store.findRecords({}, -1).value().isEmpty());
 }
 
+void TestSearch::visitsEveryMatchNewestFirst() {
+    TestDatabase db;
+    QVERIFY2(db.open(databasePath(), fixtureRecords()), qPrintable(db.error()));
+    LogStore& store = db.store();
+
+    QVector<Record> visited;
+    const auto collect = [&visited](const Record& record) {
+        visited.append(record);
+        return true;
+    };
+    QVERIFY2(store.visitRecords({}, collect), qPrintable(store.errorString()));
+    // The same records in the same order as findRecords() gives them, with every column.
+    const QVector<Record> rows = store.findRecords({}, 100).value();
+    QCOMPARE(idsOf(visited), idsOf(rows));
+    QCOMPARE(visited.at(13).fields, rows.at(13).fields);
+    QCOMPARE(visited.first().source, QStringLiteral("cart"));
+    QCOMPARE(visited.first().raw, rows.first().raw);
+
+    visited.clear();
+    QVERIFY2(store.visitRecords(conditionFor(QStringLiteral("provider:*")), collect),
+             qPrintable(store.errorString()));
+    QCOMPARE(idsOf(visited), (QList<qint64>{7, 6, 5, 4}));
+
+    // The visitor stops the reading; that is not a failure.
+    int seen = 0;
+    QVERIFY(store.visitRecords({}, [&seen](const Record&) { return ++seen < 3; }));
+    QCOMPARE(seen, 3);
+
+    visited.clear();
+    QVERIFY(store.visitRecords(conditionFor(QStringLiteral("no-such-text")), collect));
+    QVERIFY(visited.isEmpty());
+}
+
+void TestSearch::countsMatches() {
+    TestDatabase db;
+    QVERIFY2(db.open(databasePath(), fixtureRecords()), qPrintable(db.error()));
+    LogStore& store = db.store();
+
+    QCOMPARE(store.countRecords({}).value_or(-1), kFixtureSize);
+    QCOMPARE(store.recordCount().value_or(-1), kFixtureSize);
+    for (const QString& text : {QStringLiteral("provider:*"), QStringLiteral("logged -user:admin"),
+                                QStringLiteral("no-such-text")}) {
+        const SqlFragment condition = conditionFor(text);
+        QCOMPARE(store.countRecords(condition), matchCount(store, condition));
+    }
+}
+
 void TestSearch::findsTheSpanOfMatches() {
     TestDatabase db;
     QVERIFY2(db.open(databasePath(), fixtureRecords()), qPrintable(db.error()));

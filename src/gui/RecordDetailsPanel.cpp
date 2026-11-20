@@ -96,7 +96,11 @@ void RecordDetailsPanel::addItem(Kind kind, const QString& name, const QString& 
     item->setData(NameColumn, kValueRole, value);
     item->setData(NameColumn, kFilterableRole, filterable);
     if (kind == Kind::Level) {
-        item->setForeground(ValueColumn, Theme::levelColor(m_record.level));
+        item->setForeground(ValueColumn,
+                            Theme::levelTextColor(m_record.level, m_fields->palette().color(QPalette::Base)));
+        QFont bold = item->font(ValueColumn);
+        bold.setBold(true);
+        item->setFont(ValueColumn, bold);
     }
 }
 

@@ -7,6 +7,8 @@
 #include <QAbstractItemModelTester>
 #include <QColor>
 #include <QFont>
+#include <QGuiApplication>
+#include <QPalette>
 #include <QSignalSpy>
 #include <QTest>
 
@@ -93,10 +95,12 @@ void TestRecordTableModel::colorsLevelsAndUsesFonts() {
     model.setRecords(
         {makeRecord(1, Level::Fatal, u"Out of memory"_s), makeRecord(2, Level::Unknown, u"?"_s)});
 
+    // The level colors, made readable on the background of the rows.
+    const QColor base = QGuiApplication::palette().color(QPalette::Base);
     QCOMPARE(cell(model, 0, RecordTableModel::LevelColumn, Qt::ForegroundRole).value<QColor>(),
-             Theme::levelColor(Level::Fatal));
+             Theme::levelTextColor(Level::Fatal, base));
     QCOMPARE(cell(model, 1, RecordTableModel::LevelColumn, Qt::ForegroundRole).value<QColor>(),
-             Theme::levelColor(Level::Unknown));
+             Theme::levelTextColor(Level::Unknown, base));
     QVERIFY(!cell(model, 0, RecordTableModel::MessageColumn, Qt::ForegroundRole).isValid());
 
     QVERIFY(cell(model, 0, RecordTableModel::LevelColumn, Qt::FontRole).value<QFont>().bold());

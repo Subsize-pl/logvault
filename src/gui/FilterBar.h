@@ -2,6 +2,8 @@
 
 #include "SearchQuery.h"
 
+#include <QString>
+#include <QVector>
 #include <QWidget>
 
 #include <array>
@@ -19,6 +21,8 @@ class FilterBar : public QWidget {
 
 public:
     static constexpr int kHistorySize = 20;
+    /// Zooms that Esc can step back through.
+    static constexpr int kZoomHistorySize = 50;
 
     explicit FilterBar(QWidget* parent = nullptr);
 
@@ -30,8 +34,13 @@ public:
     void showOnlyLevel(Level level);
     void hideLevel(Level level);
 
-    /// Switches to a custom period (ms UTC, the end exclusive); emits searchRequested().
-    void setCustomPeriod(qint64 from, qint64 to);
+    /// Switches to a custom period (ms UTC, the end exclusive), remembering the period in effect, and emits
+    /// searchRequested(). The histogram zooms in with it.
+    void zoomToPeriod(qint64 from, qint64 to);
+
+    /// Goes back to the period in effect before the last zoom and emits searchRequested(). Returns false when
+    /// there is none: no zoom since the user last chose a period.
+    bool restorePreviousPeriod();
 
     /// Appends a part to the search line and searches.
     void addSearchTerm(const QString& term);
@@ -45,6 +54,14 @@ signals:
 private:
     enum class Period { Last15Minutes, LastHour, Last24Hours, Last7Days, AllTime, Custom };
 
+    // A period as the combo box holds it, so it can be put back.
+    struct PeriodState {
+        int index = 0;
+        qint64 customFrom = 0;
+        qint64 customTo = 0;
+        QString customText;
+    };
+
     QWidget* createLevelButtons();
     void createPeriodBox();
     void createSearchLine();
@@ -55,6 +72,7 @@ private:
     /// from and to in ms UTC, 0 = unbounded.
     std::pair<qint64, qint64> range(Period period, qint64 now) const;
     Period currentPeriod() const;
+    PeriodState periodState() const;
     void submitSearch();
     void remember(const QString& text);
 
@@ -63,6 +81,7 @@ private:
     int m_periodIndex = 0; // the period in effect; the combo goes back to it when the dialog is cancelled
     qint64 m_customFrom = 0;
     qint64 m_customTo = 0;
+    QVector<PeriodState> m_zoomHistory; // the periods before each zoom, the latest last
     QLineEdit* m_searchLine = nullptr;
     QStringListModel* m_history = nullptr;
     QString m_submittedText;

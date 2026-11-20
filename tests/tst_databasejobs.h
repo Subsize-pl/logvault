@@ -7,7 +7,8 @@
 #include <memory>
 
 /// Checks DatabaseJobs on temporary databases: opening and creating files, renaming and deleting sources,
-/// cancelling a deletion and refusing a second job. Any Qt warning fails a test.
+/// deleting old records with progress, cancelling a deletion and refusing a second job. Any Qt warning fails
+/// a test.
 class TestDatabaseJobs : public QObject {
     Q_OBJECT
 
@@ -21,6 +22,8 @@ private slots:
     void reportsTakenName();
     void deletesSourceWithItsRecords();
     void cancelKeepsSourceAndRemainingRecords();
+    void deletesOldRecordsWithProgress();
+    void cancelKeepsOldRecordsNotReached();
     void runsOneJobAtATime();
 
 private:

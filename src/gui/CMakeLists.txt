@@ -1,9 +1,13 @@
 # Everything but main.cpp is a library, so the tests can check the models and widgets too.
 qt_add_library(lv_gui STATIC
+    DeleteRecordsDialog.cpp
+    DeleteRecordsDialog.h
     FilterBar.cpp
     FilterBar.h
     Format.cpp
     Format.h
+    HistogramWidget.cpp
+    HistogramWidget.h
     ImportDialog.cpp
     ImportDialog.h
     LiveUpdater.cpp
@@ -20,6 +24,10 @@ qt_add_library(lv_gui STATIC
     RecordTableModel.h
     SourcesPanel.cpp
     SourcesPanel.h
+    StatsView.cpp
+    StatsView.h
+    TaskStatus.cpp
+    TaskStatus.h
     Theme.cpp
     Theme.h
 )
