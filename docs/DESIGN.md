@@ -214,7 +214,8 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 | `DatabaseJobs` | core | Opens a database file (creating a new one), renames or deletes sources and deletes old records in a worker thread, one job at a time; deletions report their progress. |
 | `MainWindow` | gui | Menus, panels, wiring between widgets and `core` objects. No business logic. |
 | `SourcesPanel`, `ReceiverPanel`, `FilterBar`, `HistogramWidget`, `RecordTableModel`, `RecordDetailsPanel`, `StatsView` | gui | The elements from §2.2. |
-| `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, colors and palettes, how numbers and times are written. |
+| `SettingsDialog`, `PeriodDialog`, `ImportDialog`, `DeleteRecordsDialog`, `Theme`, `Format` | gui | Settings, custom period, the source of each imported file, which old records to delete, colors, palettes and toolbar glyphs, how numbers and times are written. |
+| `TaskStatus` | gui | A background task in the status bar (import, export, a database job): text, progress, Cancel. |
 | `LiveUpdater` | gui | Decides when live mode refreshes the search (§6.6); no widgets, so it is tested on its own. |
 
 ### 3.3. Threads
@@ -599,10 +600,15 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
     time in UTC (ISO 8601, the form the import reads back), the keys in this order, no BOM, LF after every record.
   - The file is written through `QSaveFile`: a cancelled or failed export leaves no partial file, and a file that was
     there before stays unchanged. The open database cannot be the target.
+  - File → Export Results… (Ctrl+E, also on the toolbar) asks for the file; its extension (`.csv`, `.jsonl`) or the
+    chosen filter decides the format. The export uses the filters in effect, without the table's row limit. Progress
+    and Cancel are in the status bar; the outcome is a status bar message, an error a message box.
 - **Deletion** (a source or records older than a date) — after confirmation, in the background, in chunks of 10,000
   records, so the database is never locked for long. The matching records are counted first, so the status bar shows
   the progress after every chunk; Cancel stops after the current chunk, and the chunks deleted before stay deleted.
   Sources emptied by deleting old records stay.
+  - Data → Delete Records Older Than… asks for a date and time (a month ago by default) and all sources or one (the one
+    selected in the Sources panel at first), then for confirmation; the search refreshes when the job ends.
 
 ---
 
@@ -618,8 +624,8 @@ logvault/
 │   ├── core/       Record, TimeParser, LineParser, Database, LogStore, SearchQuery, SearchService,
 │   │               DatabaseJobs, LineSplitter, Ingestor, TcpServer, FileImporter, Exporter
 │   └── gui/        main.cpp, MainWindow, SourcesPanel, ReceiverPanel, FilterBar, PeriodDialog,
-│                   ImportDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel, StatsView,
-│                   LiveUpdater, SettingsDialog, Theme, Format, resources.qrc (application icon)
+│                   ImportDialog, DeleteRecordsDialog, HistogramWidget, RecordTableModel, RecordDetailsPanel,
+│                   StatsView, TaskStatus, LiveUpdater, SettingsDialog, Theme, Format, resources.qrc (application icon)
 ├── tests/          tst_*.cpp (Qt Test)
 ├── examples/       python_client.py
 ├── docs/           DESIGN.md, PROGRESS.md

@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "AppInfo.h"
+#include "DeleteRecordsDialog.h"
 #include "FilterBar.h"
 #include "Format.h"
 #include "HistogramWidget.h"
@@ -12,6 +13,7 @@
 #include "RecordTableModel.h"
 #include "SourcesPanel.h"
 #include "StatsView.h"
+#include "TaskStatus.h"
 #include "Theme.h"
 
 #include <QClipboard>
@@ -34,7 +36,6 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
-#include <QProgressBar>
 #include <QPushButton>
 #include <QScreen>
 #include <QScrollBar>
@@ -90,7 +91,7 @@ QStringList localFiles(const QMimeData* data) {
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent), m_records(new RecordTableModel(this)), m_searchService(new SearchService(this)),
-      m_jobs(new DatabaseJobs(this)), m_importer(new FileImporter(this)),
+      m_jobs(new DatabaseJobs(this)), m_importer(new FileImporter(this)), m_exporter(new Exporter(this)),
       m_live(new LiveUpdater(LiveUpdater::kDefaultIntervalMs, this)), m_searchingTimer(new QTimer(this)) {
     setWindowTitle(AppInfo::name());
     setAcceptDrops(true);
@@ -153,6 +154,12 @@ void MainWindow::createActions() {
     m_importAction->setIconText(tr("Import"));
     connect(m_importAction, &QAction::triggered, this, &MainWindow::chooseImportFiles);
 
+    m_exportAction = new QAction(Theme::glyphIcon(Theme::Glyph::Export), tr("&Export Results..."), this);
+    m_exportAction->setShortcut(Qt::CTRL | Qt::Key_E);
+    m_exportAction->setIconText(tr("Export"));
+    m_exportAction->setToolTip(tr("Export every record of the current search to CSV or JSON Lines"));
+    connect(m_exportAction, &QAction::triggered, this, &MainWindow::chooseExportFile);
+
     m_exitAction = new QAction(tr("E&xit"), this);
     connect(m_exitAction, &QAction::triggered, this, &QWidget::close);
 
@@ -160,6 +167,8 @@ void MainWindow::createActions() {
     connect(m_renameSourceAction, &QAction::triggered, this, &MainWindow::renameSource);
     m_deleteSourceAction = new QAction(tr("&Delete Source..."), this);
     connect(m_deleteSourceAction, &QAction::triggered, this, &MainWindow::deleteSource);
+    m_deleteOldAction = new QAction(tr("Delete Records &Older Than..."), this);
+    connect(m_deleteOldAction, &QAction::triggered, this, &MainWindow::deleteOldRecords);
 
     // Its text, icon and tooltip follow the receiver's state (showReceiverStats()).
     m_receiverAction = new QAction(this);
@@ -205,12 +214,15 @@ void MainWindow::createMenus() {
     file->addAction(m_openAction);
     file->addSeparator();
     file->addAction(m_importAction);
+    file->addAction(m_exportAction);
     file->addSeparator();
     file->addAction(m_exitAction);
 
     QMenu* data = menuBar()->addMenu(tr("&Data"));
     data->addAction(m_renameSourceAction);
     data->addAction(m_deleteSourceAction);
+    data->addSeparator();
+    data->addAction(m_deleteOldAction);
 
     QMenu* receiver = menuBar()->addMenu(tr("&Receiver"));
     receiver->addAction(m_receiverAction);
@@ -231,6 +243,7 @@ void MainWindow::createToolBar() {
     toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toolBar->addAction(m_openAction);
     toolBar->addAction(m_importAction);
+    toolBar->addAction(m_exportAction);
     toolBar->addSeparator();
     toolBar->addAction(m_receiverAction);
     toolBar->addSeparator();
@@ -352,39 +365,31 @@ QTableView* MainWindow::createRecordsTable() {
 
 void MainWindow::createStatusBar() {
     m_searchStatus = new QLabel;
-    m_jobStatus = new QLabel;
-    m_jobCancel = new QPushButton(tr("Cancel"));
-    m_importStatus = new QLabel;
-    m_importProgress = new QProgressBar;
-    m_importProgress->setRange(0, 100);
-    m_importProgress->setMaximumWidth(160);
-    m_importCancel = new QPushButton(tr("Cancel"));
+    m_jobTask = new TaskStatus;
+    m_importTask = new TaskStatus;
+    m_exportTask = new TaskStatus;
     m_liveStatus = new QLabel;
     m_liveStatus->setTextFormat(Qt::RichText);
+    m_liveStatus->hide();
 
     statusBar()->addWidget(m_searchStatus, 1);
-    const std::initializer_list<QWidget*> taskWidgets = {m_jobStatus,      m_jobCancel,    m_importStatus,
-                                                         m_importProgress, m_importCancel, m_liveStatus};
-    for (QWidget* widget : taskWidgets) {
+    for (QWidget* widget :
+         std::initializer_list<QWidget*>{m_jobTask, m_importTask, m_exportTask, m_liveStatus}) {
         statusBar()->addPermanentWidget(widget);
-        widget->hide();
     }
 
-    connect(m_jobCancel, &QPushButton::clicked, this, [this] {
-        m_jobs->cancel();
-        m_jobCancel->setEnabled(false);
-    });
-    connect(m_importCancel, &QPushButton::clicked, this, [this] {
-        m_importer->cancel();
-        m_importCancel->setEnabled(false);
-        m_importStatus->setText(tr("Cancelling the import..."));
-    });
+    connect(m_jobTask, &TaskStatus::cancelRequested, m_jobs, &DatabaseJobs::cancel);
+    connect(m_importTask, &TaskStatus::cancelRequested, m_importer, &FileImporter::cancel);
+    connect(m_exportTask, &TaskStatus::cancelRequested, m_exporter, &Exporter::cancel);
     connect(m_liveStatus, &QLabel::linkActivated, this, &MainWindow::resumeLive);
 }
 
 void MainWindow::connectWidgets() {
     connect(m_searchService, &SearchService::finished, this, &MainWindow::showSearchResult);
     connect(m_jobs, &DatabaseJobs::finished, this, &MainWindow::showJobResult);
+    connect(m_jobs, &DatabaseJobs::progressChanged, m_jobTask, &TaskStatus::setProgress);
+    connect(m_exporter, &Exporter::progressChanged, m_exportTask, &TaskStatus::setProgress);
+    connect(m_exporter, &Exporter::finished, this, &MainWindow::showExportSummary);
     connect(m_importer, &FileImporter::progressChanged, this, &MainWindow::showImportProgress);
     connect(m_importer, &FileImporter::finished, this, &MainWindow::showImportSummary);
 
@@ -521,11 +526,13 @@ void MainWindow::closeDatabase() {
             Qt::BlockingQueuedConnection);
     }
     m_importer->cancel();
+    m_exporter->cancel();
     m_jobs->cancel();
     // Searches for another database are stale: a running one stops after its current query, and its
     // result is dropped.
     m_searchService->setDatabasePath({});
     m_importer->waitForFinished();
+    m_exporter->waitForFinished();
     m_jobs->waitForFinished();
     m_searchService->waitForFinished();
     stopIntake();
@@ -654,26 +661,17 @@ void MainWindow::importFiles(const QStringList& paths) {
         !m_importer->start(m_databasePath, dialog.files())) {
         return;
     }
-    m_importStatus->setText(tr("Importing..."));
-    m_importProgress->setValue(0);
-    m_importCancel->setEnabled(true);
-    m_importStatus->show();
-    m_importProgress->show();
-    m_importCancel->show();
+    m_importTask->start(tr("Importing..."), true, true);
     updateActions();
 }
 
 void MainWindow::showImportProgress(int percent, const QString& fileName) {
-    if (m_importCancel->isEnabled()) {
-        m_importStatus->setText(tr("Importing %1").arg(fileName));
-    }
-    m_importProgress->setValue(percent);
+    m_importTask->setText(tr("Importing %1").arg(fileName));
+    m_importTask->setProgress(percent);
 }
 
 void MainWindow::showImportSummary(const ImportSummary& summary) {
-    m_importStatus->hide();
-    m_importProgress->hide();
-    m_importCancel->hide();
+    m_importTask->finish();
     updateActions();
     search();
 
@@ -733,17 +731,90 @@ void MainWindow::deleteSource() {
     }
 }
 
+void MainWindow::deleteOldRecords() {
+    if (m_databasePath.isEmpty() || m_jobs->isRunning()) {
+        return;
+    }
+    const std::optional<SourceInfo> selected = m_sourcesPanel->selectedSource();
+    DeleteRecordsDialog dialog(m_sourcesPanel->sources(),
+                               selected ? std::optional<qint64>(selected->id) : std::nullopt, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QString when = Format::dateTime(dialog.before());
+    const QString what =
+        dialog.sourceId() == 0
+            ? tr("Delete the records of all sources older than %1?").arg(when)
+            : tr("Delete the records of \"%1\" older than %2?").arg(dialog.sourceName(), when);
+    QMessageBox question(QMessageBox::Warning, tr("Delete Records Older Than"), what, QMessageBox::Cancel,
+                         this);
+    question.setInformativeText(tr("This cannot be undone."));
+    const QAbstractButton* remove = question.addButton(tr("Delete"), QMessageBox::DestructiveRole);
+    question.setDefaultButton(QMessageBox::Cancel);
+    question.exec();
+    // The database may have been closed while the dialogs were open.
+    if (question.clickedButton() != remove || m_databasePath.isEmpty()) {
+        return;
+    }
+    if (m_jobs->deleteRecordsOlderThan(m_databasePath, dialog.before(), dialog.sourceId())) {
+        showJob(tr("Deleting records older than %1...").arg(when), true);
+    }
+}
+
+void MainWindow::chooseExportFile() {
+    if (m_databasePath.isEmpty() || m_exporter->isRunning()) {
+        return;
+    }
+    const QString csvFilter = tr("CSV files (*.csv)");
+    const QString jsonFilter = tr("JSON Lines files (*.jsonl)");
+    QString filter = csvFilter;
+    QString path = QFileDialog::getSaveFileName(
+        this, tr("Export Results"),
+        dialogDirectory() + u"/"_s + QFileInfo(m_databasePath).completeBaseName() + u"-export.csv"_s,
+        csvFilter + u";;"_s + jsonFilter, &filter);
+    if (path.isEmpty() || m_databasePath.isEmpty()) {
+        return;
+    }
+    // The extension decides the format; a name without one gets the extension of the chosen filter.
+    QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix.isEmpty()) {
+        suffix = filter == jsonFilter ? u"jsonl"_s : u"csv"_s;
+        path += u'.' + suffix;
+    }
+    const ExportFormat format =
+        suffix == u"jsonl"_s || suffix == u"json"_s ? ExportFormat::JsonLines : ExportFormat::Csv;
+    // The table shows at most maxRows; the export takes every match of the same filters.
+    if (m_exporter->start(m_databasePath, currentFilters(), path, format, Exporter::listSeparator())) {
+        m_exportTask->start(tr("Exporting to %1").arg(QFileInfo(path).fileName()), true, true);
+        updateActions();
+    }
+}
+
+void MainWindow::showExportSummary(const ExportSummary& summary) {
+    m_exportTask->finish();
+    updateActions();
+    const QString nativePath = QDir::toNativeSeparators(summary.path);
+    if (!summary.error.isEmpty()) {
+        QMessageBox::warning(this, tr("Export Results"), tr("The export failed: %1").arg(summary.error));
+    } else if (summary.cancelled) {
+        statusBar()->showMessage(tr("The export was cancelled; %1 was not written.").arg(nativePath),
+                                 kMessageTimeoutMs);
+    } else {
+        statusBar()->showMessage(
+            tr("Exported %1 records to %2 in %3.")
+                .arg(Format::count(summary.exported), nativePath, Format::duration(summary.elapsedMs)),
+            kMessageTimeoutMs);
+    }
+}
+
 void MainWindow::showJob(const QString& text, bool cancellable) {
-    m_jobStatus->setText(text);
-    m_jobStatus->show();
-    m_jobCancel->setEnabled(true);
-    m_jobCancel->setVisible(cancellable);
+    // Only the deletions can be cancelled, and only they report progress.
+    m_jobTask->start(text, cancellable, cancellable);
     updateActions();
 }
 
 void MainWindow::showJobResult(const DatabaseJobResult& result) {
-    m_jobStatus->hide();
-    m_jobCancel->hide();
+    m_jobTask->finish();
     updateActions();
     switch (result.kind) {
     case DatabaseJobResult::Kind::Open:
@@ -793,13 +864,18 @@ void MainWindow::showJobResult(const DatabaseJobResult& result) {
     }
 }
 
+SearchRequest MainWindow::currentFilters() const {
+    SearchRequest request;
+    m_filterBar->fillRequest(request, QDateTime::currentMSecsSinceEpoch());
+    request.sourceIds = m_sourcesPanel->selectedIds();
+    return request;
+}
+
 void MainWindow::search() {
     if (m_databasePath.isEmpty()) {
         return;
     }
-    SearchRequest request;
-    m_filterBar->fillRequest(request, QDateTime::currentMSecsSinceEpoch());
-    request.sourceIds = m_sourcesPanel->selectedIds();
+    SearchRequest request = currentFilters();
     request.maxRows = kMaxRows;
     m_statsView->prepareRequest(request, m_tabs->currentWidget() == m_statsView);
     // SearchService delivers the result of the latest search only, so an earlier one never overwrites it.
@@ -904,6 +980,8 @@ void MainWindow::updateActions() {
     m_importAction->setEnabled(canImport());
     m_renameSourceAction->setEnabled(sourceSelected && !jobRunning);
     m_deleteSourceAction->setEnabled(sourceSelected && !jobRunning);
+    m_deleteOldAction->setEnabled(open && !jobRunning);
+    m_exportAction->setEnabled(open && !m_exporter->isRunning());
     m_receiverAction->setEnabled(open);
     m_liveAction->setEnabled(open);
     m_refreshAction->setEnabled(open);
