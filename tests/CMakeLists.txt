@@ -35,6 +35,8 @@ qt_add_executable(lv_tests
     tst_searchservice.h
     tst_storage.cpp
     tst_storage.h
+    tst_theme.cpp
+    tst_theme.h
     tst_timeparser.cpp
     tst_timeparser.h
 )

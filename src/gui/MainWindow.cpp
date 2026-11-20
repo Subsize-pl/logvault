@@ -64,7 +64,7 @@ constexpr int kMaxRows = 10'000;
 // A search that takes longer shows "Searching..."; for faster ones the text would only flicker.
 constexpr int kSearchingDelayMs = 300;
 constexpr int kMessageTimeoutMs = 5000;
-constexpr int kHistogramHeight = 110;
+constexpr int kHistogramHeight = 120;
 
 constexpr QChar kDot(0x25CF);
 constexpr QChar kEmDash(0x2014);
@@ -147,7 +147,7 @@ void MainWindow::createActions() {
     m_openAction->setIconText(tr("Open"));
     connect(m_openAction, &QAction::triggered, this, &MainWindow::chooseDatabase);
 
-    m_importAction = new QAction(style()->standardIcon(QStyle::SP_ArrowDown), tr("&Import Files..."), this);
+    m_importAction = new QAction(Theme::glyphIcon(Theme::Glyph::Import), tr("&Import Files..."), this);
     m_importAction->setShortcut(Qt::CTRL | Qt::Key_I);
     m_importAction->setIconText(tr("Import"));
     connect(m_importAction, &QAction::triggered, this, &MainWindow::chooseImportFiles);
@@ -165,7 +165,7 @@ void MainWindow::createActions() {
     m_receiverAction->setShortcut(Qt::CTRL | Qt::Key_R);
     connect(m_receiverAction, &QAction::triggered, this, &MainWindow::toggleReceiver);
 
-    m_liveAction = new QAction(tr("&Live Mode"), this);
+    m_liveAction = new QAction(Theme::glyphIcon(Theme::Glyph::Live), tr("&Live Mode"), this);
     m_liveAction->setIconText(tr("Live"));
     m_liveAction->setToolTip(tr("Show new records as they arrive"));
     m_liveAction->setCheckable(true);
@@ -297,6 +297,9 @@ QWidget* MainWindow::createWorkspace() {
     splitter->addWidget(m_tabs);
     splitter->setStretchFactor(1, 1);
     splitter->setChildrenCollapsible(false);
+    // The histogram starts at its height and the tabs, the only part that stretches, take the rest. Left to
+    // itself, the splitter would size the histogram from a widget that has not been laid out yet.
+    splitter->setSizes({kHistogramHeight, kHistogramHeight});
 
     auto* page = new QWidget;
     auto* layout = new QVBoxLayout(page);
@@ -596,11 +599,11 @@ void MainWindow::showReceiverStats(const ReceiverStats& stats) {
     m_receiverListening = stats.listening;
     if (stats.listening) {
         m_receiverAction->setText(tr("Stop &Receiver"));
-        m_receiverAction->setIcon(style()->standardIcon(QStyle::SP_MediaStop));
+        m_receiverAction->setIcon(Theme::glyphIcon(Theme::Glyph::Stop));
         m_receiverAction->setToolTip(tr("Stop receiving logs"));
     } else {
         m_receiverAction->setText(tr("Start &Receiver"));
-        m_receiverAction->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+        m_receiverAction->setIcon(Theme::glyphIcon(Theme::Glyph::Start));
         m_receiverAction->setToolTip(tr("Receive logs over TCP on %1:%2")
                                          .arg(QHostAddress(kReceiverAddress).toString())
                                          .arg(kReceiverPort));

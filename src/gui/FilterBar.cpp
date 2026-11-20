@@ -29,13 +29,15 @@ constexpr qint64 kDay = 24 * kHour;
 constexpr std::array kButtonOrder = {Level::Trace, Level::Debug, Level::Info,   Level::Warn,
                                      Level::Error, Level::Fatal, Level::Unknown};
 
-// Off: the level's color as text and border; on: filled with it.
+// Off: the level's color as text and border, made readable on the window; on: filled with it.
 QString levelButtonStyle(Level level) {
     const QColor color = Theme::levelColor(level);
+    const QColor text = Theme::levelTextColor(level, QGuiApplication::palette().color(QPalette::Window));
     return QStringLiteral(
                "QToolButton { color: %1; border: 1px solid %1; border-radius: 3px; padding: 2px 6px; "
-               "font-weight: bold; } QToolButton:checked { color: %2; background-color: %1; }")
-        .arg(color.name(), Theme::textColorOn(color).name());
+               "font-weight: bold; } QToolButton:checked { color: %2; background-color: %3; border-color: "
+               "%3; }")
+        .arg(text.name(), Theme::textColorOn(color).name(), color.name());
 }
 
 } // namespace

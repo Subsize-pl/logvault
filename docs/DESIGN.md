@@ -167,11 +167,18 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
 
 ### 2.4. Look and feel
 
-- `Fusion` style; theme: system (Qt 6.5+ follows the Windows theme), light or dark — via `QPalette`.
+- `Fusion` style; theme: system (Qt 6.5+ follows the Windows theme), light or dark — via `QPalette`. The selection and
+  the alternate rows use neutral slate grays instead of the Windows accent color (`Theme::neutralPalette()`), so the
+  level colors read well on every row; placeholder text is gray (the dark Windows palette makes it white).
 - Level colors are constants in one place (`gui/Theme`), shared by the table, the level buttons and the histogram:
   TRACE `#8A8F98`, DEBUG `#5B7083`, INFO `#2E7D32`, WARN `#E0A100`, ERROR `#D32F2F`, FATAL `#7B1FA2`, UNKNOWN `#9E9E9E`.
+  As text (the table, the record details, the statistics, the level buttons) a level color is lightened or darkened in
+  its own hue until it has a contrast of 4.5:1 with the background (`Theme::levelTextColor()`); bars and filled buttons
+  use the colors as they are.
 - Monospace font for messages and raw lines; numbers with thousands separators.
-- Icons: standard `QStyle::standardIcon`; only the application icon is custom.
+- Icons: standard `QStyle::standardIcon` where they read in both themes. Import, export, start/stop receiver and live
+  are glyphs drawn in the palette's colors (`Theme::glyphIcon()`): the standard ones are dark pixmaps that vanish on a
+  dark toolbar. The application icon is custom.
 
 ---
 
