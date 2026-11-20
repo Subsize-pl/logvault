@@ -6,7 +6,8 @@
 > stores them in a database, and lets the user search, filter and analyze them conveniently.
 > **Size:** about 4–5k lines of product code, tests excluded. This is a guideline, not a limit: reliability and quality come first.
 > **Language:** everything in the repository is in English — UI text, code comments, documentation, commit messages.
-> **Status:** v0.4, scope agreed. Development goes one stage per session (§9); progress is tracked in `docs/PROGRESS.md`.
+> **Status:** v0.4, implemented: all stages of §9 are done (2026-11-20, LogVault 1.0.0); the notes of each stage are in
+> `docs/PROGRESS.md`.
 
 ## 0. Rules for agents
 
