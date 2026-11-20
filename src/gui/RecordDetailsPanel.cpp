@@ -69,7 +69,7 @@ RecordDetailsPanel::RecordDetailsPanel(QWidget* parent)
 void RecordDetailsPanel::showRecord(const Record& record) {
     clear();
     m_record = record;
-    addItem(Kind::Time, tr("Time"), Format::timestamp(record.ts), false);
+    addItem(Kind::Time, tr("Time"), Format::timestamp(record.ts, m_zone), false);
     addItem(Kind::Level, tr("Level"), levelName(record.level), true);
     addItem(Kind::Source, tr("Source"), record.source, true);
     addItem(Kind::Message, tr("Message"), record.message, !Format::firstLine(record.message).isEmpty());
@@ -88,6 +88,19 @@ void RecordDetailsPanel::clear() {
     m_fields->clear();
     m_raw->clear();
     m_record = {};
+}
+
+void RecordDetailsPanel::setTimeZone(const QTimeZone& zone) {
+    m_zone = zone;
+    showAgain();
+}
+
+void RecordDetailsPanel::showAgain() {
+    if (m_fields->topLevelItemCount() > 0) {
+        // A copy: showRecord() clears m_record first.
+        const Record shown = m_record;
+        showRecord(shown);
+    }
 }
 
 void RecordDetailsPanel::addItem(Kind kind, const QString& name, const QString& value, bool filterable) {

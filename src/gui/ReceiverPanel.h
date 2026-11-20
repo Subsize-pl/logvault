@@ -2,6 +2,7 @@
 
 #include "TcpServer.h"
 
+#include <QTimeZone>
 #include <QWidget>
 
 class QAction;
@@ -19,10 +20,15 @@ public:
 
     void setStats(const ReceiverStats& stats);
 
+    /// The zone of the times the clients connected at; local time at first.
+    void setTimeZone(const QTimeZone& zone);
+
 private:
     void showConnections(const QVector<ConnectionInfo>& connections);
 
     QLabel* m_state;
     QTableWidget* m_connections;
     QLabel* m_rate;
+    ReceiverStats m_stats; // the stats shown
+    QTimeZone m_zone{QTimeZone::LocalTime};
 };

@@ -53,13 +53,13 @@ void appendCsvField(QString& out, const QString& text, QChar separator) {
     out += u'"';
 }
 
-// The local time, as the records table shows it: Excel reads this form as a date and time.
-QString csvTime(qint64 msecs) {
-    return QDateTime::fromMSecsSinceEpoch(msecs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
+// The time as the records table shows it, in the display zone: Excel reads this form as a date and time.
+QString csvTime(qint64 msecs, const QTimeZone& zone) {
+    return QDateTime::fromMSecsSinceEpoch(msecs, zone).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
 }
 
-void appendCsvRecord(QString& out, const Record& record, QChar separator) {
-    const std::array<QString, 5> fields = {csvTime(record.ts), levelName(record.level), record.source,
+void appendCsvRecord(QString& out, const Record& record, QChar separator, const QTimeZone& zone) {
+    const std::array<QString, 5> fields = {csvTime(record.ts, zone), levelName(record.level), record.source,
                                            record.message, record.fields};
     for (std::size_t i = 0; i < fields.size(); ++i) {
         if (i > 0) {
@@ -144,9 +144,10 @@ class ExportJob {
     Q_DECLARE_TR_FUNCTIONS(Exporter)
 
 public:
-    ExportJob(ExportFormat format, QChar separator, const std::atomic<bool>& cancel,
+    ExportJob(ExportFormat format, QChar separator, const QTimeZone& zone, const std::atomic<bool>& cancel,
               ProgressCallback progress)
-        : m_format(format), m_separator(separator), m_cancel(cancel), m_progress(std::move(progress)) {}
+        : m_format(format), m_separator(separator), m_zone(zone), m_cancel(cancel),
+          m_progress(std::move(progress)) {}
 
     ExportSummary run(const QString& databasePath, const SearchRequest& request, const QString& path);
 
@@ -161,6 +162,7 @@ private:
 
     const ExportFormat m_format;
     const QChar m_separator;
+    const QTimeZone m_zone;
     const std::atomic<bool>& m_cancel;
     ProgressCallback m_progress;
     QString m_text; // not written to the file yet
@@ -231,7 +233,7 @@ bool ExportJob::writeRecords(LogStore& store, const SqlFragment& condition, QSav
     appendHeader();
     const bool read = store.visitRecords(condition, [this, &file](const Record& record) {
         if (m_format == ExportFormat::Csv) {
-            appendCsvRecord(m_text, record, m_separator);
+            appendCsvRecord(m_text, record, m_separator, m_zone);
         } else {
             appendJsonRecord(m_text, record);
         }
@@ -263,9 +265,11 @@ void ExportJob::appendHeader() {
     }
     // Excel takes a UTF-8 file without a byte order mark for one in the local code page.
     m_text += kByteOrderMark;
-    const std::array<QString, 5> names = {QStringLiteral("Time"), QStringLiteral("Level"),
-                                          QStringLiteral("Source"), QStringLiteral("Message"),
-                                          QStringLiteral("Fields")};
+    // Times in UTC say so: the file may be read far from here.
+    const std::array<QString, 5> names = {m_zone.timeSpec() == Qt::UTC ? QStringLiteral("Time (UTC)")
+                                                                       : QStringLiteral("Time"),
+                                          QStringLiteral("Level"), QStringLiteral("Source"),
+                                          QStringLiteral("Message"), QStringLiteral("Fields")};
     for (std::size_t i = 0; i < names.size(); ++i) {
         if (i > 0) {
             m_text += m_separator;
@@ -330,14 +334,15 @@ Exporter::~Exporter() {
 }
 
 bool Exporter::start(const QString& databasePath, const SearchRequest& request, const QString& path,
-                     ExportFormat format, QChar separator) {
+                     ExportFormat format, QChar separator, const QTimeZone& zone) {
     if (m_running) {
         return false;
     }
     m_running = true;
     m_cancel = false;
-    m_watcher.setFuture(QtConcurrent::run([this, databasePath, request, path, format, separator] {
-        ExportJob job(format, separator, m_cancel, [this](int percent) { emit progressChanged(percent); });
+    m_watcher.setFuture(QtConcurrent::run([this, databasePath, request, path, format, separator, zone] {
+        ExportJob job(format, separator, zone, m_cancel,
+                      [this](int percent) { emit progressChanged(percent); });
         return job.run(databasePath, request, path);
     }));
     return true;

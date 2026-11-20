@@ -11,6 +11,7 @@ private slots:
     void startsEmpty();
     void showsHeaders();
     void showsRecordTexts();
+    void showsTimesInTheChosenZone();
     void showsFirstLineOfMessage();
     void cutsLongLinesBetweenCharacters();
     void colorsLevelsAndUsesFonts();

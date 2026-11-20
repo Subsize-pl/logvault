@@ -2,6 +2,7 @@
 
 #include "Record.h"
 
+#include <QTimeZone>
 #include <QWidget>
 
 class QPlainTextEdit;
@@ -20,6 +21,9 @@ public:
     void showRecord(const Record& record);
     void clear();
 
+    /// The zone of the record's time; local time at first.
+    void setTimeZone(const QTimeZone& zone);
+
 signals:
     /// "Search for this value" or "Exclude this value" on the message or a field: a part for the search line.
     void searchTermRequested(const QString& term);
@@ -30,6 +34,7 @@ signals:
 private:
     enum class Kind { Time, Level, Source, Message, Field };
 
+    void showAgain();
     void addItem(Kind kind, const QString& name, const QString& value, bool filterable);
     void showContextMenu(const QPoint& position);
     void filterBy(const QTreeWidgetItem* item, bool exclude);
@@ -37,4 +42,5 @@ private:
     QTreeWidget* m_fields;
     QPlainTextEdit* m_raw;
     Record m_record; // the record shown
+    QTimeZone m_zone{QTimeZone::LocalTime};
 };

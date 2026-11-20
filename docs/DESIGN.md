@@ -176,6 +176,10 @@ Ctrl+F focuses the search line; Enter searches; Esc cancels the histogram select
   its own hue until it has a contrast of 4.5:1 with the background (`Theme::levelTextColor()`); bars and filled buttons
   use the colors as they are.
 - Monospace font for messages and raw lines; numbers with thousands separators.
+- Times are shown and entered in the display time zone (a setting: local time or UTC): the table, the record details,
+  the histogram labels and tooltips, the custom period and deletion dialogs, the receiver's connections and the CSV
+  export. In UTC the table and the CSV header say `Time (UTC)`, and the dialogs name the zone of their fields. JSON
+  Lines exports always use UTC with `Z`; log lines without a zone are read as local time (§5.4) whatever the setting.
 - Icons: standard `QStyle::standardIcon` where they read in both themes. Import, export, start/stop receiver and live
   are glyphs drawn in the palette's colors (`Theme::glyphIcon()`): the standard ones are dark pixmaps that vanish on a
   dark toolbar. The application icon is custom.
@@ -557,9 +561,9 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
 - Bars are stacked by level using the `Theme` colors, the most severe at the bottom (FATAL, ERROR, … UNKNOWN), so a
   spike of errors stands on the axis; the tooltip shows the interval and per-level counts. The scale is labeled with
   the count of the fullest bar.
-- Time labels sit on round local times (14:00, 14:15) at a spacing that fits the bars, as precise as that spacing
-  (`HH:mm:ss`, `HH:mm`, `MMM d`, `yyyy-MM-dd`); a label at local midnight shows the date. Day bars start at UTC midnight,
-  so their labels sit on round UTC times. The widget paints the histogram of the last `SearchResult` only.
+- Time labels sit on round times of the display zone (14:00, 14:15) at a spacing that fits the bars, as precise as that
+  spacing (`HH:mm:ss`, `HH:mm`, `MMM d`, `yyyy-MM-dd`); a label at midnight shows the date. Day bars start at UTC
+  midnight, so their labels sit on round UTC times. The widget paints the histogram of the last `SearchResult` only.
 - Drag-select → the "Custom range" period from the selection bounds → a new search. The selection snaps to whole bars;
   a click selects nothing (it gives the histogram the focus). Esc restores the previous period: `FilterBar` remembers
   the periods before the last 50 zooms and steps back one per Esc; choosing a period in the combo box forgets them.
@@ -594,8 +598,9 @@ so most records never reach the sort. Timings are in `docs/PROGRESS.md` (stage 4
   JSON Lines: one object per record.
   - The records come newest first, like the table. `LogStore::visitRecords()` reads them one row at a time in one read
     transaction, after counting them for the progress (`countRecords()`), so any number fits in memory.
-  - CSV: the header `Time,Level,Source,Message,Fields`; the time as the table shows it (local,
-    `yyyy-MM-dd HH:mm:ss.zzz`, which Excel reads as a date); the fields as their JSON text; CRLF after every record.
+  - CSV: the header `Time,Level,Source,Message,Fields` (`Time (UTC)` in UTC); the time as the table shows it (display
+    zone, `yyyy-MM-dd HH:mm:ss.zzz`, which Excel reads as a date); the fields as their JSON text; CRLF after every
+    record.
   - JSON Lines: `{"time":"2026-11-20T11:05:01.123Z","level":"ERROR","source":"…","message":"…","fields":{…}}` — the
     time in UTC (ISO 8601, the form the import reads back), the keys in this order, no BOM, LF after every record.
   - The file is written through `QSaveFile`: a cancelled or failed export leaves no partial file, and a file that was
@@ -690,7 +695,8 @@ class TcpServer : public QObject {
 CMake, Ninja and Qt 6 (`qt6-base`). `C:\msys64\ucrt64\bin` must be first in `PATH` for building and running.
 In CLion: *Settings → Build, Execution, Deployment → Toolchains → + MinGW*, path `C:\msys64\ucrt64`, make it the default.
 
-**CMake.** `find_package(Qt6 6.5 REQUIRED COMPONENTS Core Sql Network Concurrent Widgets Test)`, `qt_standard_project_setup()`.
+**CMake.** `find_package(Qt6 6.8 REQUIRED COMPONENTS Core Sql Network Concurrent Widgets Test)`, `qt_standard_project_setup()`.
+Qt 6.8 is the oldest version with `QStyleHints::setColorScheme()` (the theme setting) and `QDateTimeEdit::setTimeZone()`.
 Targets: `lv_core` and `lv_gui` (static libraries), `LogVault` (`WIN32_EXECUTABLE`, `main.cpp` only), `lv_tests`
 (registered with `add_test`).
 C++20, warnings `-Wall -Wextra -Wpedantic`. `CMakePresets.json` with `debug` and `release` presets

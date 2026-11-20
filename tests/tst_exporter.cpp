@@ -83,10 +83,11 @@ bool TestExporter::fill(const QVector<Record>& records) const {
 }
 
 std::optional<ExportSummary> TestExporter::exportTo(const QString& path, ExportFormat format, QChar separator,
-                                                    const SearchRequest& request) const {
+                                                    const SearchRequest& request,
+                                                    const QTimeZone& zone) const {
     Exporter exporter;
     QSignalSpy finished(&exporter, &Exporter::finished);
-    if (!exporter.start(databasePath(), request, path, format, separator) || !finished.wait(kWaitMs)) {
+    if (!exporter.start(databasePath(), request, path, format, separator, zone) || !finished.wait(kWaitMs)) {
         return std::nullopt;
     }
     return finished.takeFirst().first().value<ExportSummary>();
@@ -131,6 +132,19 @@ void TestExporter::csvUsesTheGivenSeparator() {
         localTime(kT + 1) + uR"(;WARN;a,b;"say ""hi""";"{""k"":""v,w""}")"_s,
         localTime(kT) + u";INFO;web;plain;"_s,
     };
+    QCOMPARE(readFile(path), kByteOrderMark + csvText(lines));
+}
+
+void TestExporter::csvTimesFollowTheTimeZone() {
+    QVERIFY(fill({makeRecord(kT, Level::Info, u"web"_s, u"plain"_s)}));
+    const QString path = filePath(u"utc.csv"_s);
+    const std::optional<ExportSummary> summary =
+        exportTo(path, ExportFormat::Csv, u',', {}, QTimeZone(QTimeZone::UTC));
+    QVERIFY(summary);
+    QVERIFY2(summary->error.isEmpty(), qPrintable(summary->error));
+    // The same on every computer, and the header says which zone the times are in.
+    const QStringList lines = {u"Time (UTC),Level,Source,Message,Fields"_s,
+                               u"2026-11-20 10:00:00.000,INFO,web,plain,"_s};
     QCOMPARE(readFile(path), kByteOrderMark + csvText(lines));
 }
 

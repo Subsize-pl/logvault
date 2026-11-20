@@ -5,6 +5,7 @@
 #include <QAbstractTableModel>
 #include <QFont>
 #include <QList>
+#include <QTimeZone>
 #include <QVector>
 
 /// The records of the last search as the records table shows them (DESIGN.md section 2.2): time, level in
@@ -21,6 +22,9 @@ public:
     /// Replaces every row. Views lose their selection without a selectionChanged() signal.
     void setRecords(QVector<Record> records);
 
+    /// The zone of the times shown; local time at first.
+    void setTimeZone(const QTimeZone& zone);
+
     /// The record in a row; the row must exist.
     const Record& record(int row) const;
 
@@ -36,6 +40,7 @@ private:
     QString displayText(const Record& record, int column) const;
 
     QVector<Record> m_records;
+    QTimeZone m_zone{QTimeZone::LocalTime};
     QFont m_levelFont;
     QFont m_messageFont;
 };

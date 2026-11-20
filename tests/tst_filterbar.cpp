@@ -1,13 +1,16 @@
 #include "tst_filterbar.h"
 
 #include "FilterBar.h"
+#include "PeriodDialog.h"
 
 #include <QAbstractItemModel>
 #include <QComboBox>
 #include <QCompleter>
+#include <QDateTimeEdit>
 #include <QLineEdit>
 #include <QSignalSpy>
 #include <QTest>
+#include <QTimeZone>
 #include <QToolButton>
 
 using namespace Qt::StringLiterals;
@@ -110,6 +113,39 @@ void TestFilterBar::customPeriodIsKept() {
     QCOMPARE(request.from, kNow - 2 * kHour);
     QCOMPARE(request.to, kNow - kHour);
     QVERIFY(bar.findChild<QComboBox*>()->currentText().contains(u" to "_s));
+}
+
+void TestFilterBar::customPeriodFollowsTheTimeZone() {
+    // kNow is 2026-11-20 10:00:00 UTC.
+    FilterBar bar;
+    const auto* period = bar.findChild<QComboBox*>();
+    bar.setTimeZone(QTimeZone(QTimeZone::UTC));
+    bar.zoomToPeriod(kNow, kNow + kHour);
+    QCOMPARE(period->currentText(), u"2026-11-20 10:00:00 to 2026-11-20 11:00:00"_s);
+
+    // Another zone writes the same period differently; the period itself stays.
+    bar.setTimeZone(QTimeZone::fromSecondsAheadOfUtc(5 * 3600));
+    QCOMPARE(period->currentText(), u"2026-11-20 15:00:00 to 2026-11-20 16:00:00"_s);
+    QCOMPARE(requestOf(bar).from, kNow);
+
+    // A zoom that Esc puts back is written in the zone in effect then.
+    bar.zoomToPeriod(kNow + kHour / 4, kNow + kHour / 2);
+    bar.setTimeZone(QTimeZone(QTimeZone::UTC));
+    QVERIFY(bar.restorePreviousPeriod());
+    QCOMPARE(period->currentText(), u"2026-11-20 10:00:00 to 2026-11-20 11:00:00"_s);
+}
+
+void TestFilterBar::periodDialogShowsTheTimeZone() {
+    // The fields show whole seconds, so the milliseconds are dropped.
+    const PeriodDialog utc(kNow + 123, kNow + kHour, QTimeZone(QTimeZone::UTC));
+    QCOMPARE(utc.findChildren<QDateTimeEdit*>().front()->text(), u"2026-11-20 10:00:00"_s);
+    QCOMPARE(utc.from(), kNow);
+    QCOMPARE(utc.to(), kNow + kHour);
+
+    const PeriodDialog plusFive(kNow, kNow + kHour, QTimeZone::fromSecondsAheadOfUtc(5 * 3600));
+    QCOMPARE(plusFive.findChildren<QDateTimeEdit*>().front()->text(), u"2026-11-20 15:00:00"_s);
+    QCOMPARE(plusFive.from(), kNow);
+    QCOMPARE(plusFive.to(), kNow + kHour);
 }
 
 void TestFilterBar::zoomsBackThroughEarlierPeriods() {

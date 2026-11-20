@@ -105,6 +105,7 @@ private:
     void updateLiveIndicator();
     void resumeLive();
 
+    void applyTimeZone();
     void updateActions();
     void reportError(const QString& message);
     QString dialogDirectory() const;

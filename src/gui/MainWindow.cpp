@@ -97,6 +97,7 @@ MainWindow::MainWindow(QSettings& store, QWidget* parent)
     createCentralArea();
     createStatusBar();
     connectWidgets();
+    applyTimeZone();
     showReceiverStats({});
     updateActions();
     updateLiveIndicator();
@@ -338,7 +339,7 @@ QTableView* MainWindow::createRecordsTable() {
     columns->setStretchLastSection(true);
     columns->setHighlightSections(false);
     columns->resizeSection(RecordTableModel::TimeColumn,
-                           table->fontMetrics().horizontalAdvance(Format::timestamp(0)) + 24);
+                           table->fontMetrics().horizontalAdvance(Format::timestamp(0, QTimeZone::UTC)) + 24);
     columns->resizeSection(RecordTableModel::LevelColumn,
                            QFontMetrics(bold).horizontalAdvance(levelName(Level::Unknown)) + 24);
     columns->resizeSection(RecordTableModel::SourceColumn, table->fontMetrics().averageCharWidth() * 16);
@@ -739,12 +740,13 @@ void MainWindow::deleteOldRecords() {
         return;
     }
     const std::optional<SourceInfo> selected = m_sourcesPanel->selectedSource();
+    const QTimeZone zone = m_settings.displayZone();
     DeleteRecordsDialog dialog(m_sourcesPanel->sources(),
-                               selected ? std::optional<qint64>(selected->id) : std::nullopt, this);
+                               selected ? std::optional<qint64>(selected->id) : std::nullopt, zone, this);
     if (dialog.exec() != QDialog::Accepted) {
         return;
     }
-    const QString when = Format::dateTime(dialog.before());
+    const QString when = Format::dateTime(dialog.before(), zone);
     const QString what =
         dialog.sourceId() == 0
             ? tr("Delete the records of all sources older than %1?").arg(when)
@@ -787,7 +789,8 @@ void MainWindow::chooseExportFile() {
     const ExportFormat format =
         suffix == u"jsonl"_s || suffix == u"json"_s ? ExportFormat::JsonLines : ExportFormat::Csv;
     // The table shows at most maxRows; the export takes every match of the same filters.
-    if (m_exporter->start(m_databasePath, currentFilters(), path, format, Exporter::listSeparator())) {
+    if (m_exporter->start(m_databasePath, currentFilters(), path, format, Exporter::listSeparator(),
+                          m_settings.displayZone())) {
         m_exportTask->start(tr("Exporting to %1").arg(QFileInfo(path).fileName()), true, true);
         updateActions();
     }
@@ -972,6 +975,15 @@ void MainWindow::updateLiveIndicator() {
 void MainWindow::resumeLive() {
     m_table->clearSelection();
     m_table->scrollToTop();
+}
+
+void MainWindow::applyTimeZone() {
+    const QTimeZone zone = m_settings.displayZone();
+    m_records->setTimeZone(zone);
+    m_detailsPanel->setTimeZone(zone);
+    m_histogram->setTimeZone(zone);
+    m_filterBar->setTimeZone(zone);
+    m_receiverPanel->setTimeZone(zone);
 }
 
 void MainWindow::updateActions() {

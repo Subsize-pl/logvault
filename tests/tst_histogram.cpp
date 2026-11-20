@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QSignalSpy>
 #include <QTest>
+#include <QTimeZone>
 
 #include <utility>
 
@@ -20,6 +21,9 @@ constexpr qint64 kDay = 24 * kHour;
 
 // 2026-11-20 10:00:00 UTC, a Friday.
 constexpr qint64 kT = 1'795'168'800'000;
+
+const QTimeZone kLocal(QTimeZone::LocalTime);
+const QTimeZone kUtc(QTimeZone::UTC);
 
 using Period = std::pair<qint64, qint64>;
 
@@ -83,7 +87,7 @@ void TestHistogram::labelIntervalFitsTheBars() {
 
 void TestHistogram::labelsSitOnRoundTimes() {
     // Every 5 minutes; every time zone is a whole number of quarter hours away from UTC.
-    QCOMPARE(HistogramWidget::labelBoundaries(minuteBars(30), 5 * kMinute),
+    QCOMPARE(HistogramWidget::labelBoundaries(minuteBars(30), 5 * kMinute, kLocal),
              (QVector<int>{0, 5, 10, 15, 20, 25, 30}));
 
     // Bars of a day start at UTC midnight. Weekly labels then fall on Thursdays (1970-01-01 was one),
@@ -92,22 +96,40 @@ void TestHistogram::labelsSitOnRoundTimes() {
     days.start = kT - 10 * kHour;
     days.step = kDay;
     days.bars.resize(30);
-    QCOMPARE(HistogramWidget::labelBoundaries(days, 7 * kDay), (QVector<int>{6, 13, 20, 27}));
+    QCOMPARE(HistogramWidget::labelBoundaries(days, 7 * kDay, kLocal), (QVector<int>{6, 13, 20, 27}));
 
-    QVERIFY(HistogramWidget::labelBoundaries(Histogram(), kMinute).isEmpty());
+    QVERIFY(HistogramWidget::labelBoundaries(Histogram(), kMinute, kLocal).isEmpty());
+}
+
+void TestHistogram::labelsFollowTheTimeZone() {
+    // Quarter-hour bars from 10:00 UTC, labeled every hour: on whole UTC hours in UTC, and half an hour
+    // later in a zone 5:30 ahead of UTC, where 10:30 UTC is 16:00.
+    Histogram histogram = minuteBars(8);
+    histogram.step = 15 * kMinute;
+    QCOMPARE(HistogramWidget::labelBoundaries(histogram, kHour, kUtc), (QVector<int>{0, 4, 8}));
+    const QTimeZone india = QTimeZone::fromSecondsAheadOfUtc(5 * 3600 + 1800);
+    QCOMPARE(HistogramWidget::labelBoundaries(histogram, kHour, india), (QVector<int>{2, 6}));
+    QCOMPARE(HistogramWidget::labelText(kT + 30 * kMinute, kHour, india), u"16:00"_s);
+
+    // The tooltip shows the bar's interval in the zone.
+    const QString text = HistogramWidget::toolTipText(minuteBars(3), 1, kUtc);
+    QVERIFY2(text.contains(u"2026-11-20 10:01:00"_s), qPrintable(text));
+    QVERIFY(text.contains(u"10:02:00"_s));
 }
 
 void TestHistogram::labelTextMatchesTheInterval() {
     const QDateTime local = QDateTime::fromMSecsSinceEpoch(kT);
-    QCOMPARE(HistogramWidget::labelText(kT, kSecond), local.toString(u"HH:mm:ss"_s));
-    QCOMPARE(HistogramWidget::labelText(kT, 5 * kMinute), local.toString(u"HH:mm"_s));
-    QCOMPARE(HistogramWidget::labelText(kT, kDay), local.toString(u"MMM d"_s));
-    QCOMPARE(HistogramWidget::labelText(kT, 30 * kDay), local.toString(u"yyyy-MM-dd"_s));
-    // A label at local midnight shows the day instead of 00:00.
+    QCOMPARE(HistogramWidget::labelText(kT, kSecond, kLocal), local.toString(u"HH:mm:ss"_s));
+    QCOMPARE(HistogramWidget::labelText(kT, 5 * kMinute, kLocal), local.toString(u"HH:mm"_s));
+    QCOMPARE(HistogramWidget::labelText(kT, kDay, kLocal), local.toString(u"MMM d"_s));
+    QCOMPARE(HistogramWidget::labelText(kT, 30 * kDay, kLocal), local.toString(u"yyyy-MM-dd"_s));
+    // A label at midnight shows the day instead of 00:00.
     const qint64 midnight = local.date().startOfDay().toMSecsSinceEpoch();
-    QCOMPARE(HistogramWidget::labelText(midnight, kHour), local.toString(u"MMM d"_s));
+    QCOMPARE(HistogramWidget::labelText(midnight, kHour, kLocal), local.toString(u"MMM d"_s));
+    QCOMPARE(HistogramWidget::labelText(kT, 5 * kMinute, kUtc), u"10:00"_s);
+    QCOMPARE(HistogramWidget::labelText(kT - 10 * kHour, kHour, kUtc), u"Nov 20"_s);
     // Month names are English, as the rest of the UI.
-    QVERIFY(HistogramWidget::labelText(kT, kDay).startsWith(u"Nov"_s));
+    QVERIFY(HistogramWidget::labelText(kT, kDay, kLocal).startsWith(u"Nov"_s));
 }
 
 void TestHistogram::toolTipShowsIntervalAndLevels() {
@@ -118,8 +140,8 @@ void TestHistogram::toolTipShowsIntervalAndLevels() {
     histogram.bars[1][static_cast<int>(Level::Fatal)] = 1;
     histogram.bars[2] = {};
 
-    const QString text = HistogramWidget::toolTipText(histogram, 1);
-    QVERIFY2(text.contains(Format::dateTime(kT + kMinute)), qPrintable(text));
+    const QString text = HistogramWidget::toolTipText(histogram, 1, kLocal);
+    QVERIFY2(text.contains(Format::dateTime(kT + kMinute, kLocal)), qPrintable(text));
     QVERIFY(text.contains(QDateTime::fromMSecsSinceEpoch(kT + 2 * kMinute).toString(u"HH:mm:ss"_s)));
     QVERIFY(text.contains(u"1,213 records"_s));
     QVERIFY(text.contains(u"1,200"_s));
@@ -128,8 +150,8 @@ void TestHistogram::toolTipShowsIntervalAndLevels() {
     QVERIFY(text.indexOf(u"FATAL"_s) < text.indexOf(u"ERROR"_s));
     QVERIFY(text.indexOf(u"ERROR"_s) < text.indexOf(u"INFO"_s));
 
-    QVERIFY(HistogramWidget::toolTipText(histogram, 2).contains(u"0 records"_s));
-    QVERIFY(HistogramWidget::toolTipText(histogram, 3).isEmpty());
+    QVERIFY(HistogramWidget::toolTipText(histogram, 2, kLocal).contains(u"0 records"_s));
+    QVERIFY(HistogramWidget::toolTipText(histogram, 3, kLocal).isEmpty());
 }
 
 void TestHistogram::dragSelectsAPeriod() {

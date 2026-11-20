@@ -12,6 +12,7 @@ private slots:
     void labelIntervalFitsTheBars_data();
     void labelIntervalFitsTheBars();
     void labelsSitOnRoundTimes();
+    void labelsFollowTheTimeZone();
     void labelTextMatchesTheInterval();
     void toolTipShowsIntervalAndLevels();
     void dragSelectsAPeriod();

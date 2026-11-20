@@ -62,6 +62,7 @@ ReceiverPanel::ReceiverPanel(QAction* startStopAction, QWidget* parent)
 }
 
 void ReceiverPanel::setStats(const ReceiverStats& stats) {
+    m_stats = stats;
     QString state;
     QColor color;
     if (stats.listening) {
@@ -81,13 +82,19 @@ void ReceiverPanel::setStats(const ReceiverStats& stats) {
                         .arg(Format::count(stats.linesPerSecond), Format::count(stats.totalLines)));
 }
 
+void ReceiverPanel::setTimeZone(const QTimeZone& zone) {
+    m_zone = zone;
+    showConnections(m_stats.connections);
+}
+
 void ReceiverPanel::showConnections(const QVector<ConnectionInfo>& connections) {
     m_connections->setRowCount(static_cast<int>(connections.size()));
     for (int row = 0; row < connections.size(); ++row) {
         const ConnectionInfo& connection = connections[row];
         setCell(m_connections, row, AddressColumn, connection.address);
         setCell(m_connections, row, ConnectedColumn,
-                QDateTime::fromMSecsSinceEpoch(connection.connectedAt).toString(QStringLiteral("HH:mm:ss")));
+                QDateTime::fromMSecsSinceEpoch(connection.connectedAt, m_zone)
+                    .toString(QStringLiteral("HH:mm:ss")));
         setCell(m_connections, row, LinesColumn, Format::count(connection.lines));
     }
 }

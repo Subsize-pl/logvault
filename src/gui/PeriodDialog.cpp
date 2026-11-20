@@ -1,5 +1,6 @@
 #include "PeriodDialog.h"
 
+#include "Format.h"
 #include "Theme.h"
 
 #include <QDateTime>
@@ -12,9 +13,12 @@
 
 namespace {
 
-QDateTimeEdit* createEdit(qint64 msecs) {
+QDateTimeEdit* createEdit(qint64 msecs, const QTimeZone& zone) {
+    auto* edit = new QDateTimeEdit;
+    // The zone first: a date and time set afterwards is converted to it.
+    edit->setTimeZone(zone);
     // The fields show whole seconds, so hidden milliseconds must not move the bounds.
-    auto* edit = new QDateTimeEdit(QDateTime::fromMSecsSinceEpoch(msecs / 1000 * 1000));
+    edit->setDateTime(QDateTime::fromMSecsSinceEpoch(msecs / 1000 * 1000, zone));
     edit->setDisplayFormat(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
     edit->setCalendarPopup(true);
     return edit;
@@ -22,8 +26,8 @@ QDateTimeEdit* createEdit(qint64 msecs) {
 
 } // namespace
 
-PeriodDialog::PeriodDialog(qint64 from, qint64 to, QWidget* parent)
-    : QDialog(parent), m_from(createEdit(from)), m_to(createEdit(to)),
+PeriodDialog::PeriodDialog(qint64 from, qint64 to, const QTimeZone& zone, QWidget* parent)
+    : QDialog(parent), m_from(createEdit(from, zone)), m_to(createEdit(to, zone)),
       m_problem(new QLabel(tr("The start must be before the end."))),
       m_buttons(new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel)) {
     setWindowTitle(tr("Custom Range"));
@@ -34,6 +38,7 @@ PeriodDialog::PeriodDialog(qint64 from, qint64 to, QWidget* parent)
     form->addRow(tr("To:"), m_to);
     auto* layout = new QVBoxLayout(this);
     layout->addLayout(form);
+    layout->addWidget(new QLabel(tr("Times are in %1.").arg(Format::timeZoneName(zone))));
     layout->addWidget(m_problem);
     layout->addWidget(m_buttons);
 

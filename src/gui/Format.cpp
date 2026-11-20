@@ -11,12 +11,17 @@ QString count(qint64 value) {
     return QLocale(QLocale::English, QLocale::UnitedStates).toString(value);
 }
 
-QString timestamp(qint64 msecs) {
-    return QDateTime::fromMSecsSinceEpoch(msecs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
+QString timestamp(qint64 msecs, const QTimeZone& zone) {
+    return QDateTime::fromMSecsSinceEpoch(msecs, zone).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz"));
 }
 
-QString dateTime(qint64 msecs) {
-    return QDateTime::fromMSecsSinceEpoch(msecs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+QString dateTime(qint64 msecs, const QTimeZone& zone) {
+    return QDateTime::fromMSecsSinceEpoch(msecs, zone).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+}
+
+QString timeZoneName(const QTimeZone& zone) {
+    return zone.timeSpec() == Qt::UTC ? QCoreApplication::translate("Format", "UTC")
+                                      : QCoreApplication::translate("Format", "local time");
 }
 
 QString duration(qint64 msecs) {

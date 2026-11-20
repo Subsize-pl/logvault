@@ -3,6 +3,7 @@
 #include "SearchQuery.h"
 
 #include <QString>
+#include <QTimeZone>
 #include <QVector>
 #include <QWidget>
 
@@ -47,6 +48,9 @@ public:
 
     void focusSearchLine();
 
+    /// The zone a custom period is shown and entered in; local time at first.
+    void setTimeZone(const QTimeZone& zone);
+
 signals:
     /// A filter changed or a search was asked for: the search should run again.
     void searchRequested();
@@ -59,7 +63,6 @@ private:
         int index = 0;
         qint64 customFrom = 0;
         qint64 customTo = 0;
-        QString customText;
     };
 
     QWidget* createLevelButtons();
@@ -69,6 +72,7 @@ private:
     void periodActivated(int index);
     bool chooseCustomPeriod();
     void applyCustomPeriod(qint64 from, qint64 to);
+    void showCustomPeriod();
     /// from and to in ms UTC, 0 = unbounded.
     std::pair<qint64, qint64> range(Period period, qint64 now) const;
     Period currentPeriod() const;
@@ -82,6 +86,7 @@ private:
     qint64 m_customFrom = 0;
     qint64 m_customTo = 0;
     QVector<PeriodState> m_zoomHistory; // the periods before each zoom, the latest last
+    QTimeZone m_zone{QTimeZone::LocalTime};
     QLineEdit* m_searchLine = nullptr;
     QStringListModel* m_history = nullptr;
     QString m_submittedText;
